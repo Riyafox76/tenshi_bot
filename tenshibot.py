@@ -13,7 +13,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import asyncio
 
 # ========== НАСТРОЙКИ ==========
-BOT_TOKEN = "8658625238:AAGIf0Az3cuVBUnRjv0inFK_2QGpoiVihvk"
+BOT_TOKEN = "8658625238:AAGIfOAz3cuVBUNrjvOinFK_2QGpoiVihvk"
 ADMIN_ID = 5145527096
 
 # ========== СОСТОЯНИЯ ДЛЯ FSM ==========
