@@ -12,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 import asyncio
+from aiohttp import web
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = "8658625238:AAGIfOAz3cuVBUNrjvOinFK_2QGpoiVihvk"
@@ -817,3 +818,43 @@ async def stats(message: Message):
     total = cursor.fetchone()[0]
     cursor.execute('SELECT SUM(sticker_count) FROM packs')
     total_stickers = cursor.fetchone()[0] or 0
+    cursor.execute('SELECT COUNT(*) FROM packs WHERE pack_type = "emoji"')
+    total_emoji = cursor.fetchone()[0]
+    cursor.execute('SELECT COUNT(*) FROM packs WHERE pack_type = "sticker"')
+    total_sticker_packs = cursor.fetchone()[0]
+    conn.close()
+    
+    await message.answer(
+        f"📊 **Статистика:**\n\n"
+        f"📦 Всего паков: {total}\n"
+        f"🎨 Стикер-паков: {total_sticker_packs}\n"
+        f"✨ Эмодзи-паков: {total_emoji}\n"
+        f"🖼️ Всего элементов: {total_stickers}"
+    )
+
+# ========== ДЛЯ RENDER (HEALTH CHECK) ==========
+async def health_check(request):
+    return web.Response(text="🤖 Bot is alive!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 10000)
+    await site.start()
+    print("🌐 Web server started on port 10000")
+
+# ========== ЗАПУСК ==========
+async def main():
+    await asyncio.sleep(3)
+    print("🤖 Бот запущен с поддержкой стикеров и эмодзи!")
+    
+    # Запускаем веб-сервер в фоне
+    asyncio.create_task(start_web_server())
+    
+    # Запускаем бота
+    await dp.start_polling(bot, request_timeout=60)
+
+if __name__ == "__main__":
+    asyncio.run(main())
