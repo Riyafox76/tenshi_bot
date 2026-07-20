@@ -2,7 +2,7 @@ import logging
 import sqlite3
 import os
 from datetime import datetime
-from PIL import Image
+from PIL import Image, ImageDraw, ImageOps
 import io
 import re
 from aiogram import Bot, Dispatcher, types
@@ -23,6 +23,8 @@ class CreatePack(StatesGroup):
     waiting_for_pack_name = State()
     waiting_for_emoji_images = State()
     waiting_for_emoji_pack_name = State()
+    waiting_for_palette = State()
+    waiting_for_preview = State()
 
 # ========== БАЗА ЭМОДЗИ-КОНВЕРТАЦИИ ==========
 LETTER_TO_EMOJI = {
@@ -34,25 +36,27 @@ LETTER_TO_EMOJI = {
 }
 
 TEXT_TO_EMOJI = {
-    ':heart:': '❤️',
-    ':fire:': '🔥',
-    ':cat:': '🐱',
-    ':dog:': '🐶',
-    ':star:': '⭐',
-    ':rainbow:': '🌈',
-    ':unicorn:': '🦄',
-    ':rocket:': '🚀',
-    ':sparkles:': '✨',
-    ':thumbsup:': '👍',
-    ':smile:': '😊',
-    ':laugh:': '😂',
-    ':love:': '🥰',
-    ':cool:': '😎',
-    ':cry:': '😢',
-    ':angry:': '😡',
-    ':surprised:': '😮',
-    ':sleep:': '😴',
-    ':pray:': '🙏',
+    ':heart:': '❤️', ':fire:': '🔥', ':cat:': '🐱', ':dog:': '🐶',
+    ':star:': '⭐', ':rainbow:': '🌈', ':unicorn:': '🦄', ':rocket:': '🚀',
+    ':sparkles:': '✨', ':thumbsup:': '👍', ':smile:': '😊', ':laugh:': '😂',
+    ':love:': '🥰', ':cool:': '😎', ':cry:': '😢', ':angry:': '😡',
+    ':surprised:': '😮', ':sleep:': '😴', ':pray:': '🙏'
+}
+
+FONT_STYLES = {
+    '𝒽ℯ𝓁𝓁ℴ': 'математический',
+    '𝕙𝕖𝕝𝕝𝕠': 'двойной',
+    'ᕼᗴᒪᒪᗝ': 'канадский',
+    'ʜᴇʟʟᴏ': 'капитель',
+    '🅷🅴🅻🅻🅾': 'кружочки'
+}
+
+DESIGN_TIPS = {
+    'синий': '💡 К синему отлично подходят:\n• Оранжевый (#FFA500) — для контраста\n• Белый (#FFFFFF) — для чистоты\n• Желтый (#FFD700) — для теплоты\n• Фиолетовый (#8B00FF) — для глубины',
+    'красный': '💡 К красному отлично подходят:\n• Белый — для контраста\n• Черный — для строгости\n• Золотой — для роскоши',
+    'зеленый': '💡 К зеленому отлично подходят:\n• Белый — для свежести\n• Коричневый — для натуральности\n• Желтый — для яркости',
+    'черный': '💡 К черному отлично подходят:\n• Белый — классика\n• Золотой — роскошь\n• Красный — акцент',
+    'белый': '💡 К белому отлично подходят:\n• Любой цвет! Но особенно:\n• Черный — контраст\n• Золотой — элегантность\n• Пастельные тона — нежность'
 }
 
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
@@ -123,14 +127,11 @@ def get_pack_link(pack_name, pack_type='sticker'):
     return f"https://t.me/addstickers/{pack_name}"
 
 def text_to_emoji(text):
-    """Превращает текст в эмодзи"""
     text = text.lower().strip()
     
-    # Проверяем, есть ли текст в виде :слово:
     if text in TEXT_TO_EMOJI:
         return TEXT_TO_EMOJI[text]
     
-    # Превращаем каждую букву в эмодзи-букву
     result = []
     for char in text:
         if char in LETTER_TO_EMOJI:
@@ -142,26 +143,262 @@ def text_to_emoji(text):
     
     return ' '.join(result) if result else '❓ Неизвестный текст'
 
+def get_font_variants(text):
+    """Превращает текст в разные стили"""
+    variants = []
+    
+    # Математический стиль
+    math_map = {'a':'𝒶','b':'𝒷','c':'𝒸','d':'𝒹','e':'ℯ','f':'𝒻','g':'ℊ','h':'𝒽','i':'𝒾','j':'𝒿','k':'𝓀','l':'𝓁','m':'𝓂','n':'𝓃','o':'ℴ','p':'𝓅','q':'𝓆','r':'𝓇','s':'𝓈','t':'𝓉','u':'𝓊','v':'𝓋','w':'𝓌','x':'𝓍','y':'𝓎','z':'𝓏'}
+    math_text = ''.join([math_map.get(c, c) for c in text.lower()])
+    variants.append(math_text)
+    
+    # Двойной стиль
+    double_map = {'a':'𝕒','b':'𝕓','c':'𝕔','d':'𝕕','e':'𝕖','f':'𝕗','g':'𝕘','h':'𝕙','i':'𝕚','j':'𝕛','k':'𝕜','l':'𝕝','m':'𝕞','n':'𝕟','o':'𝕠','p':'𝕡','q':'𝕢','r':'𝕣','s':'𝕤','t':'𝕥','u':'𝕦','v':'𝕧','w':'𝕨','x':'𝕩','y':'𝕪','z':'𝕫'}
+    double_text = ''.join([double_map.get(c, c) for c in text.lower()])
+    variants.append(double_text)
+    
+    # Капитель (верхний регистр)
+    cap_text = text.upper()
+    variants.append(cap_text)
+    
+    # Кружочки
+    circle_map = {'a':'🅐','b':'🅑','c':'🅒','d':'🅓','e':'🅔','f':'🅕','g':'🅖','h':'🅗','i':'🅘','j':'🅙','k':'🅚','l':'🅛','m':'🅜','n':'🅝','o':'🅞','p':'🅟','q':'🅠','r':'🅡','s':'🅢','t':'🅣','u':'🅤','v':'🅥','w':'🅦','x':'🅧','y':'🅨','z':'🅩'}
+    circle_text = ''.join([circle_map.get(c, c) for c in text.lower()])
+    variants.append(circle_text)
+    
+    return variants
+
+def extract_colors(image_bytes, num_colors=5):
+    """Вырезает главные цвета из картинки"""
+    img = Image.open(io.BytesIO(image_bytes))
+    
+    # Уменьшаем для скорости
+    img = img.resize((100, 100))
+    img = img.convert('RGB')
+    
+    # Получаем цвета
+    pixels = list(img.getdata())
+    
+    # Простой алгоритм кластеризации
+    colors = []
+    for pixel in pixels:
+        if len(colors) < num_colors:
+            colors.append(pixel)
+        else:
+            # Ищем ближайший цвет
+            min_dist = float('inf')
+            min_idx = 0
+            for i, c in enumerate(colors):
+                dist = sum((pixel[j] - c[j])**2 for j in range(3))
+                if dist < min_dist:
+                    min_dist = dist
+                    min_idx = i
+            # Если далеко от всех — заменяем самый старый
+            if min_dist > 10000:
+                colors[min_idx] = pixel
+    
+    # Конвертируем в HEX
+    hex_colors = []
+    for r, g, b in colors:
+        hex_color = f"#{r:02x}{g:02x}{b:02x}".upper()
+        hex_colors.append((hex_color, r, g, b))
+    
+    return hex_colors
+
+def create_preview(image_bytes):
+    """Создает превью стикера в кружочке"""
+    img = Image.open(io.BytesIO(image_bytes))
+    
+    # Приводим к квадрату
+    size = min(img.size)
+    left = (img.width - size) // 2
+    top = (img.height - size) // 2
+    img = img.crop((left, top, left + size, top + size))
+    img = img.resize((400, 400))
+    
+    # Создаем фон
+    preview = Image.new('RGBA', (500, 500), (50, 50, 50, 255))
+    
+    # Делаем круглую маску
+    mask = Image.new('L', (400, 400), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((0, 0, 400, 400), fill=255)
+    
+    # Применяем маску
+    if img.mode != 'RGBA':
+        img = img.convert('RGBA')
+    
+    # Вставляем в центр фона
+    preview.paste(img, (50, 50), mask)
+    
+    output = io.BytesIO()
+    preview.save(output, format='png')
+    output.seek(0)
+    return output
+
 # ========== КОМАНДЫ ==========
 @dp.message(Command("start"))
 async def start(message: Message):
     if is_admin(message.from_user.id):
         await message.answer(
             "🎨 Привет, Создатель!\n\n"
-            "Доступные команды:\n"
-            "/newpack - Создать новый пак стикеров\n"
-            "/newemoji - Создать новый пак эмодзи\n"
-            "/maketext [текст] - Превратить текст в эмодзи\n"
-            "/list - Показать все паки\n"
+            "📦 **Стикеры и эмодзи:**\n"
+            "/newpack - Создать пак стикеров\n"
+            "/newemoji - Создать пак эмодзи\n"
+            "/get [название] - Получить пак\n"
+            "/list - Мои паки\n"
             "/delete [название] - Удалить пак\n"
             "/stats - Статистика\n\n"
-            "Просто кидай мне картинки (PNG/JPG) и я превращу их в стикеры или эмодзи!"
+            "🎨 **Дизайн-инструменты:**\n"
+            "/palette - Вырезать цвета из картинки\n"
+            "/preview - Показать стикер в кружке\n"
+            "/font [текст] - Красивые шрифты\n"
+            "/ask [вопрос] - Советы по дизайну\n\n"
+            "📝 **Текст:**\n"
+            "/maketext [текст] - Текст в эмодзи"
         )
     else:
         await message.answer(
             "👋 Привет!\n\n"
-            "Я бот для создания стикеров и эмодзи.\n"
-            "Используй /get [название] чтобы получить ссылку на пак."
+            "Я бот для стикеров, эмодзи и дизайна.\n"
+            "Используй /get [название] чтобы получить пак."
+        )
+
+@dp.message(Command("palette"))
+async def palette_command(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    
+    await state.set_state(CreatePack.waiting_for_palette)
+    await message.answer("🖼️ Кинь мне картинку, и я вырежу из неё 5 главных цветов!")
+
+@dp.message(CreatePack.waiting_for_palette)
+async def handle_palette(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    
+    if not message.photo and not message.document:
+        await message.answer("❌ Кинь картинку!")
+        return
+    
+    try:
+        if message.photo:
+            file_id = message.photo[-1].file_id
+        else:
+            file_id = message.document.file_id
+        
+        file = await bot.get_file(file_id)
+        file_bytes = await bot.download_file(file.file_path)
+        file_data = file_bytes.read()
+        
+        colors = extract_colors(file_data)
+        
+        # Формируем ответ
+        response = "🎨 **Твоя палитра:**\n\n"
+        for hex_color, r, g, b in colors:
+            response += f"{hex_color} 🎨 RGB({r}, {g}, {b})\n"
+        
+        # Добавляем цветные квадратики
+        for hex_color, _, _, _ in colors:
+            response += f"`{hex_color}` "
+        
+        await message.answer(response, parse_mode="Markdown")
+        await state.clear()
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
+
+@dp.message(Command("preview"))
+async def preview_command(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    
+    await state.set_state(CreatePack.waiting_for_preview)
+    await message.answer("🖼️ Кинь мне картинку или стикер, и я покажу, как он выглядит в чате!")
+
+@dp.message(CreatePack.waiting_for_preview)
+async def handle_preview(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    
+    if not message.photo and not message.document and not message.sticker:
+        await message.answer("❌ Кинь картинку или стикер!")
+        return
+    
+    try:
+        if message.sticker:
+            file_id = message.sticker.file_id
+        elif message.photo:
+            file_id = message.photo[-1].file_id
+        else:
+            file_id = message.document.file_id
+        
+        file = await bot.get_file(file_id)
+        file_bytes = await bot.download_file(file.file_path)
+        file_data = file_bytes.read()
+        
+        preview_bytes = create_preview(file_data)
+        
+        await message.answer_photo(
+            types.BufferedInputFile(preview_bytes.getvalue(), filename="preview.png"),
+            caption="🖼️ Вот как будет выглядеть твой стикер в чате!"
+        )
+        await state.clear()
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
+
+@dp.message(Command("font"))
+async def font_command(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    
+    text = message.text.replace('/font', '').strip()
+    if not text:
+        await message.answer("📝 Напиши текст после команды:\n/font hello")
+        return
+    
+    variants = get_font_variants(text)
+    
+    response = "✨ **Красивые стили:**\n\n"
+    for i, variant in enumerate(variants):
+        style_name = ["Математический", "Двойной", "Капитель", "Кружочки"][i] if i < 4 else "Стиль"
+        response += f"**{style_name}:** {variant}\n"
+    
+    await message.answer(response, parse_mode="Markdown")
+
+@dp.message(Command("ask"))
+async def ask_command(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    
+    question = message.text.replace('/ask', '').strip()
+    if not question:
+        await message.answer(
+            "❓ Напиши вопрос после команды:\n"
+            "/ask какой цвет подойдет к синему?\n\n"
+            "Я знаю про цвета: синий, красный, зеленый, черный, белый"
+        )
+        return
+    
+    # Ищем ключевые слова
+    response = None
+    for color in DESIGN_TIPS:
+        if color in question.lower():
+            response = DESIGN_TIPS[color]
+            break
+    
+    if response:
+        await message.answer(response)
+    else:
+        await message.answer(
+            "🤔 Я пока знаю советы только про цвета.\n"
+            "Попробуй спросить про: синий, красный, зеленый, черный, белый.\n\n"
+            "Пример: /ask какой цвет подойдет к синему?"
         )
 
 @dp.message(Command("maketext"))
@@ -314,7 +551,6 @@ async def handle_emoji_image(message: Message, state: FSMContext):
         file_bytes = await bot.download_file(file.file_path)
         file_data = file_bytes.read()
         
-        # Для эмодзи используем тот же конвертер
         sticker_data = convert_to_sticker(file_data)
         
         temp_file = f"temp_{message.from_user.id}_{datetime.now().timestamp()}.webp"
@@ -581,25 +817,3 @@ async def stats(message: Message):
     total = cursor.fetchone()[0]
     cursor.execute('SELECT SUM(sticker_count) FROM packs')
     total_stickers = cursor.fetchone()[0] or 0
-    cursor.execute('SELECT COUNT(*) FROM packs WHERE pack_type = "emoji"')
-    total_emoji = cursor.fetchone()[0]
-    cursor.execute('SELECT COUNT(*) FROM packs WHERE pack_type = "sticker"')
-    total_sticker_packs = cursor.fetchone()[0]
-    conn.close()
-    
-    await message.answer(
-        f"📊 **Статистика:**\n\n"
-        f"📦 Всего паков: {total}\n"
-        f"🎨 Стикер-паков: {total_sticker_packs}\n"
-        f"✨ Эмодзи-паков: {total_emoji}\n"
-        f"🖼️ Всего элементов: {total_stickers}"
-    )
-
-# ========== ЗАПУСК ==========
-async def main():
-    await asyncio.sleep(3)
-    print("🤖 Бот запущен с поддержкой стикеров и эмодзи!")
-    await dp.start_polling(bot, request_timeout=60)
-
-if __name__ == "__main__":
-    asyncio.run(main())
