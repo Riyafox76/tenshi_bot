@@ -501,12 +501,13 @@ async def challenge_command(message: Message):
     )
     await message.answer(response)
 
-# ========== НОВЫЙ /ai (с бесплатным ИИ) ==========
+# ========== ВЫБОР РЕЖИМА ДЛЯ /ai ==========
 @dp.message(Command("ai"))
 async def ai_command(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await message.answer("❌ Нет доступа.")
         return
+    
     args = message.text.replace('/ai', '').strip()
     if not args:
         await state.set_state(CreatePack.waiting_for_ai)
@@ -519,21 +520,71 @@ async def ai_command(message: Message, state: FSMContext):
             "• Что такое композиция?"
         )
         return
-    await process_with_queue(_process_ai, message, state)
+    
+    await state.update_data(ai_question=args)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🧠 Локально", callback_data="ai_local"),
+            InlineKeyboardButton(text="🤖 ИИ (HF)", callback_data="ai_hf")
+        ]
+    ])
+    
+    await message.answer(
+        f"❓ **Вопрос:**\n{args}\n\n"
+        "Выбери режим ответа:",
+        reply_markup=keyboard
+    )
 
-async def _process_ai(message: Message, state: FSMContext):
-    response = await ai_assistant(message.text)
-    await message.answer(response, parse_mode="Markdown")
+@dp.callback_query(lambda c: c.data.startswith('ai_'))
+async def process_ai_choice(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    
+    data = await state.get_data()
+    question = data.get('ai_question')
+    
+    if not question:
+        await callback_query.message.answer("❌ Вопрос не найден. Напиши /ai заново.")
+        return
+    
+    status_msg = await callback_query.message.answer("⏳ Думаю...")
+    
+    if callback_query.data == 'ai_local':
+        response = await local_ai_assistant(question)
+        mode = "🧠 Локальный режим"
+    else:
+        response = await ai_assistant(question)
+        mode = "🤖 Режим ИИ (Hugging Face)"
+    
+    await status_msg.delete()
+    await callback_query.message.answer(
+        f"{mode}\n\n{response}",
+        parse_mode="Markdown"
+    )
     await state.clear()
 
 @dp.message(CreatePack.waiting_for_ai)
-async def handle_ai(message: Message, state: FSMContext):
+async def handle_ai_question(message: Message, state: FSMContext):
     if not message.text:
         await message.answer("❌ Напиши текст!")
         return
-    await process_with_queue(_process_ai, message, state)
+    
+    await state.update_data(ai_question=message.text)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🧠 Локально", callback_data="ai_local"),
+            InlineKeyboardButton(text="🤖 ИИ (HF)", callback_data="ai_hf")
+        ]
+    ])
+    
+    await message.answer(
+        f"❓ **Вопрос:**\n{message.text}\n\n"
+        "Выбери режим ответа:",
+        reply_markup=keyboard
+    )
 
-# ========== ОСТАЛЬНЫЕ КОМАНДЫ (без изменений) ==========
+# ========== ОСТАЛЬНЫЕ КОМАНДЫ ==========
 @dp.message(Command("removebg"))
 async def removebg_command(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
