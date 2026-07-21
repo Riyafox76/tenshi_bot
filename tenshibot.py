@@ -30,6 +30,50 @@ dp = Dispatcher(storage=storage)
 bot = Bot(token=BOT_TOKEN)
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+
+def extract_instrumental(audio_bytes):
+    """
+    Превращает трек в инструментал (удаляет вокал)
+    через вычитание каналов. Работает быстро и без потери качества.
+    """
+    # Загружаем аудио
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
+    
+    audio = AudioSegment.from_file(tmp_path)
+    os.unlink(tmp_path)
+    
+    # Переводим в numpy для обработки
+    samples = np.array(audio.get_array_of_samples())
+    
+    # Если стерео (2 канала)
+    if audio.channels == 2:
+        # Преобразуем в формат (samples, channels)
+        samples = samples.reshape((-1, 2))
+        
+        # Вычитаем правый канал из левого (удаляем центр)
+        # Вокал обычно в центре, поэтому он исчезает
+        instrumental = (samples[:, 0] - samples[:, 1]) / 2
+        
+        # Возвращаем в формат AudioSegment
+        instrumental = instrumental.astype(np.int16)
+        instrumental = AudioSegment(
+            instrumental.tobytes(),
+            frame_rate=audio.frame_rate,
+            sample_width=audio.sample_width,
+            channels=1  # Становится моно
+        )
+    else:
+        # Если уже моно, просто возвращаем как есть
+        instrumental = audio
+    
+    # Экспортируем в MP3 с высоким качеством
+    output = io.BytesIO()
+    instrumental.export(output, format="mp3", bitrate="320k")
+    output.seek(0)
+    return output
+
 def change_speed(audio_bytes, speed=1.0, pitch_shift=False, reverb=False):
     """
     Изменяет скорость аудио
@@ -47,10 +91,8 @@ def change_speed(audio_bytes, speed=1.0, pitch_shift=False, reverb=False):
     
     # Изменяем скорость
     if pitch_shift:
-        # Классический speedup (меняет и скорость, и тон)
         audio = audio.speedup(playback_speed=speed)
     else:
-        # Растяжение без изменения тональности (меняем частоту дискретизации)
         new_sample_rate = int(audio.frame_rate * speed)
         audio = audio._spawn(audio.raw_data, overrides={"frame_rate": new_sample_rate})
         audio = audio.set_frame_rate(44100)
@@ -101,17 +143,18 @@ def generate_waveform(audio_bytes):
 async def start(message: Message):
     await message.answer(
         "🎵 **Tenshi Audio Bot**\n\n"
-        "Я умею изменять скорость аудио и создавать крутые эффекты!\n\n"
+        "Я умею изменять скорость аудио, удалять вокал и создавать крутые эффекты!\n\n"
         "📤 **Просто отправь мне аудиофайл** (MP3, WAV, M4A, OGG)\n"
         "И выбери режим обработки:\n\n"
         "🎚️ **Доступные режимы:**\n"
-        "• 🐢 **Слоу** (0.7x) — глубокое звучание\n"
-        "• ⚡ **Спид** (1.5x) — энергичное звучание\n"
-        "• 🎧 **Nightcore** (1.3x + поднятие тона)\n"
-        "• 🕰️ **Винтаж** (0.6x + понижение тона)\n"
-        "• 🎸 **Фанк** (0.8x + реверберация)\n"
-        "• 🌿 **Эмбиент** (0.5x + реверберация)\n"
-        "• 🎶 **Кастом** (0.1x – 2.0x)\n\n"
+        "• 🐢 **Слоу** (0.7x)\n"
+        "• ⚡ **Спид** (1.5x)\n"
+        "• 🎧 **Nightcore** (1.3x + тон)\n"
+        "• 🕰️ **Винтаж** (0.6x + тон)\n"
+        "• 🎸 **Фанк** (0.8x + реверб)\n"
+        "• 🌿 **Эмбиент** (0.5x + реверб)\n"
+        "• 🎚️ **Кастом** (0.1x – 2.0x)\n"
+        "• 🎤 **Инструментал** (удаление вокала)\n\n"
         "📊 Также я покажу визуализацию трека!"
     )
 
@@ -120,27 +163,17 @@ async def help_command(message: Message):
     await message.answer(
         "🎵 **Tenshi Audio Bot — Справка**\n\n"
         "1. Отправь мне аудиофайл\n"
-        "2. Выбери режим скорости\n"
+        "2. Выбери режим\n"
         "3. Получи готовый трек + визуализацию\n\n"
         "🎚️ **Режимы:**\n"
         "• 0.3x–0.9x — замедление\n"
         "• 1.0x — оригинал\n"
-        "• 1.1x–2.0x — ускорение\n\n"
+        "• 1.1x–2.0x — ускорение\n"
+        "• 🎤 Инструментал — удаляет вокал\n\n"
         "🔊 **Фишки:**\n"
-        "• Сохранение тональности (качественное замедление)\n"
-        "• Классический speedup (Nightcore/Винтаж)\n"
-        "• Реверберация (Фанк/Эмбиент)\n"
-        "• Визуализация трека"
-    )
-
-@dp.message(Command("info"))
-async def info_command(message: Message):
-    await message.answer(
-        "🎵 **Tenshi Audio Bot v1.0**\n\n"
-        "Бот для изменения скорости аудио.\n"
-        "Создан для музыкантов и просто любителей.\n\n"
-        "Автор: @tenshi_design\n"
-        "Версия: 1.0"
+        "• Сохранение тональности\n"
+        "• Реверберация\n"
+        "• Визуализация"
     )
 
 # ========== ОБРАБОТЧИК АУДИО ==========
@@ -148,7 +181,6 @@ async def info_command(message: Message):
 async def handle_audio(message: Message, state: FSMContext):
     """Обрабатывает присланный аудиофайл"""
     try:
-        # Определяем тип файла
         if message.audio:
             file_id = message.audio.file_id
             file_name = message.audio.file_name or "audio.mp3"
@@ -159,15 +191,12 @@ async def handle_audio(message: Message, state: FSMContext):
             file_id = message.document.file_id
             file_name = message.document.file_name or "audio.mp3"
         
-        # Получаем файл
         file = await bot.get_file(file_id)
         file_bytes = await bot.download_file(file.file_path)
         file_data = file_bytes.read()
         
-        # Сохраняем в состояние
         await state.update_data(audio_data=file_data, file_name=file_name)
         
-        # Создаём клавиатуру с режимами скорости
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="🐢 Слоу 0.7x", callback_data="speed_0.7_normal"),
@@ -186,6 +215,7 @@ async def handle_audio(message: Message, state: FSMContext):
                 InlineKeyboardButton(text="🎚️ Кастом", callback_data="speed_custom"),
             ],
             [
+                InlineKeyboardButton(text="🎤 Инструментал", callback_data="instrumental"),
                 InlineKeyboardButton(text="📊 Визуализация", callback_data="visualize"),
             ]
         ])
@@ -214,7 +244,6 @@ async def process_speed(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.answer("❌ Аудио не найдено. Отправь трек заново.")
         return
     
-    # Если выбрано "Кастом"
     if callback.data == 'speed_custom':
         await state.set_state(AudioStates.waiting_for_audio)
         await callback.message.answer(
@@ -226,7 +255,6 @@ async def process_speed(callback: types.CallbackQuery, state: FSMContext):
         )
         return
     
-    # Парсим callback_data
     parts = callback.data.split('_')
     speed = float(parts[1])
     mode = parts[2] if len(parts) > 2 else 'normal'
@@ -236,18 +264,51 @@ async def process_speed(callback: types.CallbackQuery, state: FSMContext):
     
     await process_audio(callback.message, audio_data, file_name, speed, pitch_shift, reverb)
 
+@dp.callback_query(lambda c: c.data == 'instrumental')
+async def process_instrumental(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    
+    data = await state.get_data()
+    audio_data = data.get('audio_data')
+    file_name = data.get('file_name', 'audio.mp3')
+    
+    if not audio_data:
+        await callback.message.answer("❌ Аудио не найдено. Отправь трек заново.")
+        return
+    
+    try:
+        status_msg = await callback.message.answer("⏳ Удаляю вокал...")
+        
+        # Делаем инструментал
+        result_audio = extract_instrumental(audio_data)
+        
+        # Генерируем визуализацию
+        waveform = generate_waveform(audio_data)
+        
+        await callback.message.answer_audio(
+            audio=BufferedInputFile(result_audio.getvalue(), filename=f"instrumental_{file_name}"),
+            caption="🎤 **Инструментал готов!**\n\nВокал удалён, качество сохранено."
+        )
+        
+        if waveform:
+            await callback.message.answer_photo(
+                photo=BufferedInputFile(waveform.getvalue(), filename="waveform.png"),
+                caption="📊 Визуализация трека"
+            )
+        
+        await status_msg.delete()
+        
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+
 async def process_audio(message, audio_data, file_name, speed, pitch_shift=False, reverb=False):
     """Обрабатывает аудио и отправляет результат"""
     try:
         status_msg = await message.answer("⏳ Обрабатываю трек...")
         
-        # Меняем скорость
         result_audio = change_speed(audio_data, speed, pitch_shift, reverb)
-        
-        # Генерируем визуализацию
         waveform = generate_waveform(audio_data)
         
-        # Формируем название режима
         mode_names = {
             (0.7, False, False): "🐢 Слоу (0.7x)",
             (1.5, False, False): "⚡ Спид (1.5x)",
@@ -260,20 +321,14 @@ async def process_audio(message, audio_data, file_name, speed, pitch_shift=False
         
         speed_text = mode_names.get((speed, pitch_shift, reverb), f"{speed}x")
         
-        caption = (
-            f"🎵 **Готово!**\n\n"
-            f"Режим: `{speed_text}`\n"
-            f"Файл: `{file_name}`"
-        )
+        caption = f"🎵 **Готово!**\n\nРежим: `{speed_text}`\nФайл: `{file_name}`"
         
-        # Отправляем аудио
         await message.answer_audio(
             audio=BufferedInputFile(result_audio.getvalue(), filename=f"speed_{speed}_{file_name}"),
             caption=caption,
             parse_mode="Markdown"
         )
         
-        # Отправляем визуализацию
         if waveform:
             await message.answer_photo(
                 photo=BufferedInputFile(waveform.getvalue(), filename="waveform.png"),
@@ -308,7 +363,6 @@ async def process_visualize(callback: types.CallbackQuery, state: FSMContext):
     except Exception as e:
         await callback.message.answer(f"❌ Ошибка: {str(e)}")
 
-# ========== ОБРАБОТЧИК КАСТОМНОЙ СКОРОСТИ ==========
 @dp.message(AudioStates.waiting_for_audio)
 async def handle_custom_speed(message: Message, state: FSMContext):
     try:
@@ -341,8 +395,9 @@ async def stats_command(message: Message):
     
     await message.answer(
         "📊 **Tenshi Audio Bot — Статистика**\n\n"
-        "• Версия: 1.0\n"
-        "• Статус: ✅ Онлайн"
+        "• Версия: 1.1\n"
+        "• Статус: ✅ Онлайн\n"
+        "• Фичи: Speed, Pitch, Reverb, Instrumental"
     )
 
 # ========== ДЛЯ RENDER ==========
@@ -360,8 +415,8 @@ async def start_web_server():
 
 async def main():
     await asyncio.sleep(3)
-    print("🎵 Tenshi Audio Bot запущен!")
-    print("⚡ Готов к обработке аудио!")
+    print("🎵 Tenshi Audio Bot v1.1 запущен!")
+    print("⚡ Доступны: Speed, Pitch Shift, Reverb, Instrumental!")
     asyncio.create_task(start_web_server())
     await dp.start_polling(bot, request_timeout=90)
 
