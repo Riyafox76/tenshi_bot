@@ -1,628 +1,369 @@
 import logging
-import sqlite3
 import os
-import random
-import asyncio
-from datetime import datetime
-from PIL import Image, ImageDraw, ImageFont
 import io
-import re
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+import asyncio
+import tempfile
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from pydub import AudioSegment
+import matplotlib.pyplot as plt
+import numpy as np
 from aiohttp import web
 
 # ========== НАСТРОЙКИ ==========
-BOT_TOKEN = "8658625238:AAGIfOAz3cuVBUNrjvOinFK_2QGpoiVihvk"
-ADMIN_ID = 5145527096
-REMOVE_BG_API_KEY = "PXqz6KQmZGPLSNJqVBhne55L"
-
-# ========== НАСТРОЙКИ БЕСПЛАТНОГО ИИ (Hugging Face) ==========
-# Токен берётся из переменных окружения на Render (безопасно!)
-HF_API_TOKEN = os.getenv("HF_API_TOKEN", "")
-
-MAX_CONCURRENT_TASKS = 2
-TASK_TIMEOUT = 90
+BOT_TOKEN = "ТВОЙ_ТОКЕН_СЮДА"  # Вставь токен от нового бота
+ADMIN_ID = 123456789  # Вставь свой Telegram ID
 
 # ========== СОСТОЯНИЯ ==========
-class CreatePack(StatesGroup):
-    waiting_for_images = State()
-    waiting_for_pack_name = State()
-    waiting_for_pack_tags = State()
-    waiting_for_emoji_images = State()
-    waiting_for_emoji_pack_name = State()
-    waiting_for_emoji_pack_tags = State()
-    waiting_for_palette = State()
-    waiting_for_preview = State()
-    waiting_for_font = State()
-    waiting_for_contrast = State()
-    waiting_for_pxrem = State()
-    waiting_for_golden = State()
-    waiting_for_removebg = State()
-    waiting_for_ai = State()
-
-# ========== БАЗЫ ==========
-LETTER_TO_EMOJI = {
-    'a': '🇦', 'b': '🇧', 'c': '🇨', 'd': '🇩', 'e': '🇪',
-    'f': '🇫', 'g': '🇬', 'h': '🇭', 'i': '🇮', 'j': '🇯',
-    'k': '🇰', 'l': '🇱', 'm': '🇲', 'n': '🇳', 'o': '🇴',
-    'p': '🇵', 'q': '🇶', 'r': '🇷', 's': '🇸', 't': '🇹',
-    'u': '🇺', 'v': '🇻', 'w': '🇼', 'x': '🇽', 'y': '🇾', 'z': '🇿'
-}
-
-TEXT_TO_EMOJI = {
-    ':heart:': '❤️', ':fire:': '🔥', ':cat:': '🐱', ':dog:': '🐶',
-    ':star:': '⭐', ':rainbow:': '🌈', ':unicorn:': '🦄', ':rocket:': '🚀',
-    ':sparkles:': '✨', ':thumbsup:': '👍', ':smile:': '😊', ':laugh:': '😂',
-    ':love:': '🥰', ':cool:': '😎', ':cry:': '😢', ':angry:': '😡',
-    ':surprised:': '😮', ':sleep:': '😴', ':pray:': '🙏'
-}
-
-DESIGN_TIPS = {
-    'синий': '💡 К синему отлично подходят:\n• Оранжевый (#FFA500) — для контраста\n• Белый (#FFFFFF) — для чистоты\n• Желтый (#FFD700) — для теплоты\n• Фиолетовый (#8B00FF) — для глубины',
-    'красный': '💡 К красному отлично подходят:\n• Белый — для контраста\n• Черный — для строгости\n• Золотой — для роскоши',
-    'зеленый': '💡 К зеленому отлично подходят:\n• Белый — для свежести\n• Коричневый — для натуральности\n• Желтый — для яркости',
-    'черный': '💡 К черному отлично подходят:\n• Белый — классика\n• Золотой — роскошь\n• Красный — акцент',
-    'белый': '💡 К белому отлично подходят:\n• Любой цвет! Но особенно:\n• Черный — контраст\n• Золотой — элегантность\n• Пастельные тона — нежность'
-}
-
-# ========== РАСШИРЕННЫЙ СПИСОК ЧЕЛЛЕНДЖЕЙ ==========
-CHALLENGES = [
-    {"title": "Логотип для кофейни", "description": "Сделай логотип для кофейни с капибарами", "style": "Киберпанк + ретро-футуризм", "colors": ["#00D4FF", "#9B59B6", "#1A1A1A"], "format": "512×512 px"},
-    {"title": "Иконка для приложения", "description": "Создай иконку для приложения 'Космическое такси'", "style": "Минимализм + неон", "colors": ["#FF6B6B", "#4ECDC4", "#2C3E50"], "format": "1024×1024 px"},
-    {"title": "Постер для концерта", "description": "Дизайн постера для джазового фестиваля", "style": "Винтаж + современная типографика", "colors": ["#F39C12", "#8E44AD", "#ECF0F1"], "format": "A4 (210×297 мм)"},
-    {"title": "Упаковка для чая", "description": "Разработай дизайн упаковки для коллекции травяных чаёв", "style": "Ботаника + акварель", "colors": ["#27AE60", "#F1C40F", "#FFFFFF"], "format": "Коробка 120×80×60 мм"},
-    {"title": "Интерфейс для погодного приложения", "description": "Нарисуй экран погоды с анимацией", "style": "Глассморфизм (Glassmorphism)", "colors": ["#74B9FF", "#DFE6E9", "#2D3436"], "format": "375×812 px (iPhone X)"},
-    {"title": "Обложка для альбома", "description": "Сделай обложку для альбома в жанре Lo-Fi", "style": "Аналоговый синтвейв + городской пейзаж", "colors": ["#2C3E50", "#E74C3C", "#F1C40F"], "format": "3000×3000 px"},
-    {"title": "Презентация для стартапа", "description": "Дизайн 3-х слайдов для стартапа по ИИ", "style": "Минимализм + дата-визуализация", "colors": ["#6C5CE7", "#00CEC9", "#DFE6E9"], "format": "1920×1080 px"},
-    {"title": "Вывеска для магазина", "description": "Дизайн вывески для магазина винила", "style": "Неон + ретро-шрифты", "colors": ["#FF0050", "#00E5FF", "#1A1A1A"], "format": "2000×1000 px"},
-    {"title": "Иллюстрация для статьи", "description": "Создай иллюстрацию для статьи о космосе", "style": "Векторная графика + футуризм", "colors": ["#0C0C1D", "#6C5CE7", "#FDCB6E"], "format": "1200×800 px"},
-    {"title": "Дизайн для соцсетей", "description": "Сделай шаблон для Instagram-сторис о психологии", "style": "Пастельные тона + минимализм", "colors": ["#FFB8B8", "#A8D8EA", "#FFD3B4"], "format": "1080×1920 px"},
-]
+class AudioStates(StatesGroup):
+    waiting_for_audio = State()
 
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
 logging.basicConfig(level=logging.INFO)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 bot = Bot(token=BOT_TOKEN)
-os.makedirs('fonts', exist_ok=True)
-
-# ========== КЛАСС ОЧЕРЕДИ ==========
-class TaskQueue:
-    def __init__(self, max_concurrent=MAX_CONCURRENT_TASKS):
-        self.queue = asyncio.Queue()
-        self.active_tasks = set()
-        self.max_concurrent = max_concurrent
-        self.is_running = True
-        self._worker_task = None
-
-    async def add_task(self, task_func, *args, **kwargs):
-        future = asyncio.Future()
-        await self.queue.put((task_func, args, kwargs, future))
-        return await future
-
-    async def _worker(self):
-        while self.is_running:
-            try:
-                if len(self.active_tasks) >= self.max_concurrent:
-                    await asyncio.sleep(0.1)
-                    continue
-
-                try:
-                    task_func, args, kwargs, future = await asyncio.wait_for(
-                        self.queue.get(), timeout=1.0
-                    )
-                except asyncio.TimeoutError:
-                    continue
-
-                async def run_task():
-                    try:
-                        result = await asyncio.wait_for(
-                            task_func(*args, **kwargs),
-                            timeout=TASK_TIMEOUT
-                        )
-                        future.set_result(result)
-                    except Exception as e:
-                        future.set_exception(e)
-                    finally:
-                        self.active_tasks.discard(asyncio.current_task())
-                        self.queue.task_done()
-
-                task = asyncio.create_task(run_task())
-                self.active_tasks.add(task)
-
-            except Exception as e:
-                logging.error(f"Ошибка в воркере очереди: {e}")
-                await asyncio.sleep(0.5)
-
-    def start(self):
-        if self._worker_task is None or self._worker_task.done():
-            self._worker_task = asyncio.create_task(self._worker())
-
-    def stop(self):
-        self.is_running = False
-        if self._worker_task:
-            self._worker_task.cancel()
-
-task_queue = None
-
-# ========== ОБЁРТКА ДЛЯ ОЧЕРЕДИ ==========
-async def process_with_queue(func, message, *args, **kwargs):
-    """Обёртка для выполнения функции через очередь"""
-    status_msg = await message.answer("⏳ Обрабатываю запрос...")
-    try:
-        result = await task_queue.add_task(func, message, *args, **kwargs)
-        await status_msg.delete()
-        return result
-    except asyncio.TimeoutError:
-        await status_msg.edit_text("❌ Время выполнения задачи истекло. Попробуйте позже.")
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
-
-# ========== БАЗА ДАННЫХ ==========
-def init_db():
-    conn = sqlite3.connect('packs.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS packs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            pack_name TEXT UNIQUE,
-            pack_link TEXT,
-            sticker_count INTEGER,
-            downloads INTEGER DEFAULT 0,
-            tags TEXT DEFAULT '',
-            created_at TEXT,
-            creator_id INTEGER,
-            pack_type TEXT DEFAULT 'sticker'
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS temp_stickers (
-            user_id INTEGER,
-            file_id TEXT,
-            position INTEGER,
-            pack_type TEXT DEFAULT 'sticker'
-        )
-    ''')
-    try:
-        cursor.execute('ALTER TABLE packs ADD COLUMN downloads INTEGER DEFAULT 0')
-    except sqlite3.OperationalError:
-        pass
-    try:
-        cursor.execute('ALTER TABLE packs ADD COLUMN tags TEXT DEFAULT ""')
-    except sqlite3.OperationalError:
-        pass
-    conn.commit()
-    conn.close()
-
-init_db()
-
-def is_admin(user_id):
-    return user_id == ADMIN_ID
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
-def convert_to_sticker(image_bytes):
-    img = Image.open(io.BytesIO(image_bytes))
-    if img.mode in ('RGBA', 'LA'):
-        background = Image.new('RGB', img.size, (255, 255, 255))
-        background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
-        img = background
-    elif img.mode != 'RGB':
-        img = img.convert('RGB')
-    width, height = img.size
-    new_size = min(width, height)
-    left = (width - new_size) / 2
-    top = (height - new_size) / 2
-    right = (width + new_size) / 2
-    bottom = (height + new_size) / 2
-    img = img.crop((left, top, right, bottom))
-    img = img.resize((512, 512), Image.Resampling.LANCZOS)
+def change_speed(audio_bytes, speed=1.0, pitch_shift=False, reverb=False):
+    """
+    Изменяет скорость аудио
+    speed: 0.1–2.0
+    pitch_shift: True — меняет тон (классический speedup), False — сохраняет тон
+    reverb: True — добавляет реверберацию
+    """
+    # Загружаем аудио
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
+    
+    audio = AudioSegment.from_file(tmp_path)
+    os.unlink(tmp_path)
+    
+    # Изменяем скорость
+    if pitch_shift:
+        # Классический speedup (меняет и скорость, и тон)
+        audio = audio.speedup(playback_speed=speed)
+    else:
+        # Растяжение без изменения тональности (меняем частоту дискретизации)
+        new_sample_rate = int(audio.frame_rate * speed)
+        audio = audio._spawn(audio.raw_data, overrides={"frame_rate": new_sample_rate})
+        audio = audio.set_frame_rate(44100)
+    
+    # Добавляем реверберацию (для режимов Ambient, Funk)
+    if reverb:
+        reverb_audio = audio - 12
+        audio = audio.overlay(reverb_audio, position=200)
+    
+    # Экспортируем в MP3 с высоким качеством
     output = io.BytesIO()
-    img.save(output, format='webp', quality=95)
-    output.seek(0)
-    return output.getvalue()
-
-def get_pack_link(pack_name, pack_type='sticker'):
-    if pack_type == 'emoji':
-        return f"https://t.me/addemojiset/{pack_name}"
-    return f"https://t.me/addstickers/{pack_name}"
-
-def text_to_emoji(text):
-    text = text.lower().strip()
-    if text in TEXT_TO_EMOJI:
-        return TEXT_TO_EMOJI[text]
-    result = []
-    for char in text:
-        if char in LETTER_TO_EMOJI:
-            result.append(LETTER_TO_EMOJI[char])
-        elif char == ' ':
-            result.append('  ')
-        else:
-            result.append(char)
-    return ' '.join(result) if result else '❓ Неизвестный текст'
-
-def create_palette_card(colors):
-    if not colors:
-        return None
-    card_width = 600
-    card_height = 200
-    block_width = card_width // len(colors)
-    card = Image.new('RGB', (card_width, card_height), color='#F5F5F5')
-    draw = ImageDraw.Draw(card)
-    try:
-        font = ImageFont.truetype("arial.ttf", 16)
-    except:
-        font = ImageFont.load_default()
-    x = 0
-    for hex_color, r, g, b in colors:
-        draw.rectangle([x, 0, x + block_width, card_height - 40], fill=hex_color)
-        text = hex_color
-        brightness = (r * 0.299 + g * 0.587 + b * 0.114)
-        text_color = '#FFFFFF' if brightness < 140 else '#000000'
-        draw.text((x + 10, card_height - 30), text, font=font, fill=text_color)
-        x += block_width
-    img_io = io.BytesIO()
-    card.save(img_io, format='PNG')
-    img_io.seek(0)
-    return img_io
-
-def create_font_preview(text, font_paths):
-    images = []
-    for font_path in font_paths:
-        img = Image.new('RGB', (600, 100), color='#FFFFFF')
-        draw = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.truetype(font_path, 48)
-        except:
-            font = ImageFont.load_default()
-            draw.text((10, 20), f"[{os.path.basename(font_path)}]", font=font, fill='#000000')
-        draw.text((20, 25), text, font=font, fill='#000000')
-        images.append(img)
-    if not images:
-        return None
-    total_height = sum(img.height + 5 for img in images)
-    combined = Image.new('RGB', (600, total_height), color='#FFFFFF')
-    y = 0
-    for img in images:
-        combined.paste(img, (0, y))
-        y += img.height + 5
-    img_io = io.BytesIO()
-    combined.save(img_io, format='PNG')
-    img_io.seek(0)
-    return img_io
-
-def extract_colors(image_bytes, num_colors=5):
-    img = Image.open(io.BytesIO(image_bytes))
-    img = img.resize((100, 100))
-    img = img.convert('RGB')
-    pixels = list(img.getdata())
-    colors = []
-    for pixel in pixels:
-        if len(colors) < num_colors:
-            colors.append(pixel)
-        else:
-            min_dist = float('inf')
-            min_idx = 0
-            for i, c in enumerate(colors):
-                dist = sum((pixel[j] - c[j])**2 for j in range(3))
-                if dist < min_dist:
-                    min_dist = dist
-                    min_idx = i
-            if min_dist > 10000:
-                colors[min_idx] = pixel
-    hex_colors = []
-    for r, g, b in colors:
-        hex_color = f"#{r:02x}{g:02x}{b:02x}".upper()
-        hex_colors.append((hex_color, r, g, b))
-    return hex_colors
-
-def create_preview(image_bytes):
-    img = Image.open(io.BytesIO(image_bytes))
-    size = min(img.size)
-    left = (img.width - size) // 2
-    top = (img.height - size) // 2
-    img = img.crop((left, top, left + size, top + size))
-    img = img.resize((400, 400))
-    preview = Image.new('RGBA', (500, 500), (50, 50, 50, 255))
-    mask = Image.new('L', (400, 400), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.ellipse((0, 0, 400, 400), fill=255)
-    if img.mode != 'RGBA':
-        img = img.convert('RGBA')
-    preview.paste(img, (50, 50), mask)
-    output = io.BytesIO()
-    preview.save(output, format='png')
+    audio.export(output, format="mp3", bitrate="320k")
     output.seek(0)
     return output
 
-async def remove_background(image_bytes):
-    if not REMOVE_BG_API_KEY:
-        return None
-    try:
-        response = requests.post(
-            'https://api.remove.bg/v1.0/removebg',
-            files={'image_file': ('image.jpg', image_bytes, 'image/jpeg')},
-            data={'size': 'auto'},
-            headers={'X-Api-Key': REMOVE_BG_API_KEY}
-        )
-        if response.status_code == 200:
-            return response.content
-        return None
-    except Exception as e:
-        logging.error(f"Remove.bg error: {e}")
-        return None
-
-# ========== ИСПРАВЛЕННЫЙ БЕСПЛАТНЫЙ ИИ (Hugging Face) ==========
-async def ai_assistant(prompt):
-    """Бесплатный ИИ-помощник через Hugging Face"""
-    if not HF_API_TOKEN:
-        logging.warning("⚠️ HF_API_TOKEN не найден. Использую локальный режим.")
-        return await local_ai_assistant(prompt)
+def generate_waveform(audio_bytes):
+    """Генерирует спектрограмму"""
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
     
-    # Создаём сессию с повторными попытками
-    session = requests.Session()
-    retries = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-    session.mount('https://', HTTPAdapter(max_retries=retries))
+    audio = AudioSegment.from_file(tmp_path)
+    os.unlink(tmp_path)
     
-    try:
-        headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-        data = {
-            "inputs": f"Ты — профессиональный дизайнер-ассистент Tenshi. Ответь кратко, полезно и по делу: {prompt}",
-            "parameters": {"max_new_tokens": 150, "temperature": 0.7}
-        }
-        
-        logging.info(f"📤 Отправка запроса в HF: {prompt[:30]}...")
-        
-        response = session.post(
-            "https://api-inference.huggingface.co/models/google/flan-t5-base",
-            headers=headers,
-            json=data,
-            timeout=30
-        )
-        
-        logging.info(f"📥 HF статус: {response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            logging.info(f"📄 HF ответ: {str(result)[:200]}")
-            
-            if isinstance(result, list) and len(result) > 0:
-                generated = result[0].get('generated_text')
-                if generated:
-                    return generated
-                else:
-                    logging.warning("⚠️ HF ответ без текста")
-                    return await local_ai_assistant(prompt)
-            else:
-                logging.warning(f"⚠️ HF неожиданный формат ответа: {type(result)}")
-                return await local_ai_assistant(prompt)
-        
-        elif response.status_code == 503:
-            logging.warning("⏳ HF модель загружается (503). Повтор через 5 сек...")
-            await asyncio.sleep(5)
-            response = session.post(
-                "https://api-inference.huggingface.co/models/google/flan-t5-base",
-                headers=headers,
-                json=data,
-                timeout=30
-            )
-            if response.status_code == 200:
-                result = response.json()
-                if isinstance(result, list) and len(result) > 0:
-                    generated = result[0].get('generated_text')
-                    if generated:
-                        return generated
-            return await local_ai_assistant(prompt)
-            
-        else:
-            logging.warning(f"⚠️ HF ошибка {response.status_code}: {response.text[:200]}")
-            return await local_ai_assistant(prompt)
-            
-    except requests.exceptions.Timeout:
-        logging.error("⏰ HF таймаут (30 сек). Использую локальный режим.")
-        return await local_ai_assistant(prompt)
-    except Exception as e:
-        logging.error(f"❌ HF исключение: {e}")
-        return await local_ai_assistant(prompt)
-    finally:
-        session.close()
-
-async def local_ai_assistant(prompt):
-    """Локальный ИИ на базе знаний (работает без интернета)"""
-    prompt_lower = prompt.lower()
+    samples = np.array(audio.get_array_of_samples())
+    if audio.channels == 2:
+        samples = samples.reshape((-1, 2))
+        samples = np.mean(samples, axis=1)
     
-    if any(word in prompt_lower for word in ["цвет", "цвета", "палитра", "сочетание", "оттенок"]):
-        return "🎨 **Советы по цвету:**\n\n• Используй цветовой круг для подбора гармоничных сочетаний\n• Комплементарные цвета дают максимальный контраст\n• Аналоговые цвета создают спокойную гармонию\n• Триадные цвета — динамичные сочетания\n• Проверь контраст через /contrast"
+    plt.figure(figsize=(12, 4))
+    plt.plot(samples[::100], color='#6C5CE7', linewidth=0.8)
+    plt.title("Волновая форма трека", fontsize=14, color='white')
+    plt.xlabel("Время (условное)", color='white')
+    plt.ylabel("Амплитуда", color='white')
+    plt.gca().set_facecolor('#1A1A1A')
+    plt.gcf().patch.set_facecolor('#1A1A1A')
+    plt.grid(True, alpha=0.2, color='white')
+    plt.tight_layout()
     
-    elif any(word in prompt_lower for word in ["логотип", "лого", "бренд", "айдентика"]):
-        return "💡 **Советы по логотипу:**\n\n• Простота — ключ к запоминанию\n• Используй не более 2-3 цветов\n• Шрифт должен читаться в любом размере\n• Проверь логотип в чёрно-белом варианте\n• Проверь в маленьком размере (аватарка)"
-    
-    elif any(word in prompt_lower for word in ["шрифт", "шрифты", "типографика", "гарнитура"]):
-        return "📝 **Советы по типографике:**\n\n• Не используй более 2-3 шрифтов в проекте\n• Контрастные шрифты создают динамику\n• Проверяй читаемость на разных размерах\n• Для заголовков используй display-шрифты\n• Для текста — шрифты с хорошей читаемостью"
-    
-    elif any(word in prompt_lower for word in ["композиция", "верстка", "макет", "сетка", "расположение"]):
-        return "📐 **Советы по композиции:**\n\n• Правило третей — размещай ключевые элементы на пересечении линий\n• Используй направляющие линии для движения глаз\n• Создавай иерархию через размер и цвет\n• Оставляй достаточно пустого пространства"
-    
-    elif any(word in prompt_lower for word in ["ux", "ui", "интерфейс", "приложение", "сайт", "юзабилити"]):
-        return "📱 **Советы по UX/UI:**\n\n• Пользователь должен понимать интерфейс без инструкции\n• Кнопки должны быть заметными и удобными\n• Цвета должны быть контрастными для читаемости\n• Используй привычные паттерны (корзина, поиск)"
-    
-    else:
-        return "🤔 **Я пока не знаю точного ответа.**\n\nМогу помочь с темами:\n• Цвет и палитры 🎨\n• Логотипы и брендинг 💡\n• Шрифты и типографика 📝\n• Композиция и верстка 📐\n• UX/UI интерфейсы 📱\n\n**Попробуй переформулировать вопрос** или спроси про одну из этих тем."
+    img_io = io.BytesIO()
+    plt.savefig(img_io, format='png', dpi=80, bbox_inches='tight')
+    plt.close()
+    img_io.seek(0)
+    return img_io
 
 # ========== КОМАНДЫ ==========
 @dp.message(Command("start"))
 async def start(message: Message):
-    if is_admin(message.from_user.id):
-        await message.answer(
-            "🎨 **Привет, Tenshi!**\n\n"
-            "📦 **Стикеры и эмодзи:**\n"
-            "/newpack - Создать пак стикеров\n"
-            "/newemoji - Создать пак эмодзи\n"
-            "/get [название] - Получить пак\n"
-            "/search [тег] - Найти паки по тегу\n"
-            "/list - Мои паки\n"
-            "/delete [название] - Удалить пак\n"
-            "/stats - Статистика\n\n"
-            "🎨 **Дизайн-инструменты:**\n"
-            "/palette - Вырезать цвета из картинки\n"
-            "/preview - Показать стикер в кружке\n"
-            "/font [текст] - Красивые шрифты\n"
-            "/ask [вопрос] - Советы по дизайну\n"
-            "/contrast - Проверить контраст\n"
-            "/removebg - Удалить фон\n"
-            "/challenge - Получить дизайн-задачу\n"
-            "/pxrem - Конвертер PX ↔ REM\n"
-            "/golden - Золотое сечение\n\n"
-            "🤖 **ИИ-помощник:**\n"
-            "/ai [вопрос] - Задать вопрос по дизайну\n\n"
-            "📝 **Текст:**\n"
-            "/maketext [текст] - Текст в эмодзи"
-        )
-    else:
-        await message.answer(
-            "✦ **Привет!**\n\n"
-            "🎨 **Дизайн-инструменты:**\n"
-            "/palette - Вырезать цвета\n"
-            "/preview - Превью стикера\n"
-            "/font [текст] - Красивые шрифты\n"
-            "/ask - Советы по дизайну\n"
-            "/contrast - Проверить контраст\n"
-            "/pxrem - Конвертер PX ↔ REM\n"
-            "/golden - Золотое сечение\n"
-            "/maketext - Текст в эмодзи\n\n"
-            "📦 **Получить пак:**\n"
-            "/get [название] - Ссылка на пак\n"
-            "/search [тег] - Найти паки"
-        )
-
-# ========== НОВЫЙ /ask (расширенный) ==========
-@dp.message(Command("ask"))
-async def ask_command(message: Message):
-    question = message.text.replace('/ask', '').strip()
-    if not question:
-        await message.answer(
-            "❓ Напиши вопрос после команды:\n"
-            "/ask как подобрать шрифты?\n\n"
-            "Я знаю про: цвета, логотипы, шрифты, композицию, UX/UI."
-        )
-        return
-    
-    response = None
-    if any(word in question.lower() for word in ["цвет", "палитр", "оттенок", "сочетание"]):
-        response = "🎨 **Советы по цвету:**\n\n• Используй цветовой круг\n• Комплементарные цвета дают контраст\n• Аналоговые цвета — спокойная гармония\n• Проверяй контраст через /contrast"
-    elif any(word in question.lower() for word in ["логотип", "лого", "бренд", "айдентика"]):
-        response = "💡 **Советы по логотипу:**\n\n• Простота — ключ к запоминанию\n• Не более 2-3 цветов\n• Шрифт должен читаться в любом размере\n• Проверь в чёрно-белом варианте"
-    elif any(word in question.lower() for word in ["шрифт", "типографик", "гарнитур", "начертани"]):
-        response = "📝 **Советы по типографике:**\n\n• Не более 2-3 шрифтов в проекте\n• Контрастные шрифты создают динамику\n• Проверяй читаемость на разных размерах\n• Для заголовков используй display-шрифты"
-    elif any(word in question.lower() for word in ["композици", "верстк", "макет", "сетк", "расположени"]):
-        response = "📐 **Советы по композиции:**\n\n• Правило третей — ключевые элементы на пересечении линий\n• Направляющие линии для движения глаз\n• Иерархия через размер и цвет\n• Пустое пространство — не враг"
-    elif any(word in question.lower() for word in ["ux", "ui", "интерфейс", "приложени", "сайт", "юзабилити"]):
-        response = "📱 **Советы по UX/UI:**\n\n• Пользователь должен понимать интерфейс без инструкции\n• Кнопки должны быть заметными и удобными\n• Цвета должны быть контрастными для читаемости\n• Используй привычные паттерны"
-    else:
-        response = "🤔 Я пока знаю советы по темам:\n• Цвета 🎨\n• Логотипы 💡\n• Шрифты 📝\n• Композиция 📐\n• UX/UI 📱\n\nПопробуй переформулировать вопрос или спроси про одну из этих тем."
-    
-    await message.answer(response)
-
-# ========== НОВЫЙ /challenge (с перемешиванием) ==========
-@dp.message(Command("challenge"))
-async def challenge_command(message: Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Нет доступа.")
-        return
-    challenge = random.choice(CHALLENGES)
-    response = (
-        f"🎨 **Дизайн-челлендж!**\n\n"
-        f"**Задача:** {challenge['title']}\n"
-        f"**Описание:** {challenge['description']}\n"
-        f"**Стиль:** {challenge['style']}\n"
-        f"**Цвета:** " + ", ".join(challenge['colors']) + "\n"
-        f"**Формат:** {challenge['format']}\n\n"
-        f"✨ Твоя очередь! Удачи!"
-    )
-    await message.answer(response)
-
-# ========== ВЫБОР РЕЖИМА ДЛЯ /ai ==========
-@dp.message(Command("ai"))
-async def ai_command(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Нет доступа.")
-        return
-    
-    args = message.text.replace('/ai', '').strip()
-    if not args:
-        await state.set_state(CreatePack.waiting_for_ai)
-        await message.answer(
-            "🤖 **ИИ-помощник по дизайну**\n\n"
-            "Напиши свой вопрос.\n"
-            "Например:\n"
-            "• Как подобрать цвета для логотипа?\n"
-            "• Какие шрифты сочетаются?\n"
-            "• Что такое композиция?"
-        )
-        return
-    
-    await state.update_data(ai_question=args)
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🧠 Локально", callback_data="ai_local"),
-            InlineKeyboardButton(text="🤖 ИИ (HF)", callback_data="ai_hf")
-        ]
-    ])
-    
     await message.answer(
-        f"❓ **Вопрос:**\n{args}\n\n"
-        "Выбери режим ответа:",
-        reply_markup=keyboard
+        "🎵 **Tenshi Audio Bot**\n\n"
+        "Я умею изменять скорость аудио и создавать крутые эффекты!\n\n"
+        "📤 **Просто отправь мне аудиофайл** (MP3, WAV, M4A, OGG)\n"
+        "И выбери режим обработки:\n\n"
+        "🎚️ **Доступные режимы:**\n"
+        "• 🐢 **Слоу** (0.7x) — глубокое звучание\n"
+        "• ⚡ **Спид** (1.5x) — энергичное звучание\n"
+        "• 🎧 **Nightcore** (1.3x + поднятие тона)\n"
+        "• 🕰️ **Винтаж** (0.6x + понижение тона)\n"
+        "• 🎸 **Фанк** (0.8x + реверберация)\n"
+        "• 🌿 **Эмбиент** (0.5x + реверберация)\n"
+        "• 🎶 **Кастом** (0.1x – 2.0x)\n\n"
+        "📊 Также я покажу визуализацию трека!"
     )
 
-@dp.callback_query(lambda c: c.data.startswith('ai_'))
-async def process_ai_choice(callback_query: types.CallbackQuery, state: FSMContext):
-    await callback_query.answer()
+@dp.message(Command("help"))
+async def help_command(message: Message):
+    await message.answer(
+        "🎵 **Tenshi Audio Bot — Справка**\n\n"
+        "1. Отправь мне аудиофайл\n"
+        "2. Выбери режим скорости\n"
+        "3. Получи готовый трек + визуализацию\n\n"
+        "🎚️ **Режимы:**\n"
+        "• 0.3x–0.9x — замедление\n"
+        "• 1.0x — оригинал\n"
+        "• 1.1x–2.0x — ускорение\n\n"
+        "🔊 **Фишки:**\n"
+        "• Сохранение тональности (качественное замедление)\n"
+        "• Классический speedup (Nightcore/Винтаж)\n"
+        "• Реверберация (Фанк/Эмбиент)\n"
+        "• Визуализация трека"
+    )
+
+@dp.message(Command("info"))
+async def info_command(message: Message):
+    await message.answer(
+        "🎵 **Tenshi Audio Bot v1.0**\n\n"
+        "Бот для изменения скорости аудио.\n"
+        "Создан для музыкантов и просто любителей.\n\n"
+        "Автор: @tenshi_design\n"
+        "Версия: 1.0"
+    )
+
+# ========== ОБРАБОТЧИК АУДИО ==========
+@dp.message(lambda message: message.audio or message.voice or message.document)
+async def handle_audio(message: Message, state: FSMContext):
+    """Обрабатывает присланный аудиофайл"""
+    try:
+        # Определяем тип файла
+        if message.audio:
+            file_id = message.audio.file_id
+            file_name = message.audio.file_name or "audio.mp3"
+        elif message.voice:
+            file_id = message.voice.file_id
+            file_name = "voice.ogg"
+        else:
+            file_id = message.document.file_id
+            file_name = message.document.file_name or "audio.mp3"
+        
+        # Получаем файл
+        file = await bot.get_file(file_id)
+        file_bytes = await bot.download_file(file.file_path)
+        file_data = file_bytes.read()
+        
+        # Сохраняем в состояние
+        await state.update_data(audio_data=file_data, file_name=file_name)
+        
+        # Создаём клавиатуру с режимами скорости
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🐢 Слоу 0.7x", callback_data="speed_0.7_normal"),
+                InlineKeyboardButton(text="⚡ Спид 1.5x", callback_data="speed_1.5_normal"),
+            ],
+            [
+                InlineKeyboardButton(text="🎧 Nightcore 1.3x", callback_data="speed_1.3_pitch"),
+                InlineKeyboardButton(text="🕰️ Винтаж 0.6x", callback_data="speed_0.6_pitch"),
+            ],
+            [
+                InlineKeyboardButton(text="🎸 Фанк 0.8x", callback_data="speed_0.8_reverb"),
+                InlineKeyboardButton(text="🌿 Эмбиент 0.5x", callback_data="speed_0.5_reverb"),
+            ],
+            [
+                InlineKeyboardButton(text="🎶 Оригинал 1.0x", callback_data="speed_1.0_normal"),
+                InlineKeyboardButton(text="🎚️ Кастом", callback_data="speed_custom"),
+            ],
+            [
+                InlineKeyboardButton(text="📊 Визуализация", callback_data="visualize"),
+            ]
+        ])
+        
+        await message.answer(
+            f"🎵 **Трек загружен!**\n\n"
+            f"Название: `{file_name}`\n"
+            f"Выбери режим обработки:",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при загрузке: {str(e)}")
+
+# ========== ОБРАБОТЧИКИ КНОПОК ==========
+@dp.callback_query(lambda c: c.data.startswith('speed_'))
+async def process_speed(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
     
     data = await state.get_data()
-    question = data.get('ai_question')
+    audio_data = data.get('audio_data')
+    file_name = data.get('file_name', 'audio.mp3')
     
-    if not question:
-        await callback_query.message.answer("❌ Вопрос не найден. Напиши /ai заново.")
+    if not audio_data:
+        await callback.message.answer("❌ Аудио не найдено. Отправь трек заново.")
         return
     
-    status_msg = await callback_query.message.answer("⏳ Думаю...")
+    # Если выбрано "Кастом"
+    if callback.data == 'speed_custom':
+        await state.set_state(AudioStates.waiting_for_audio)
+        await callback.message.answer(
+            "🎚️ **Введи скорость в формате:**\n"
+            "0.5 — для замедления\n"
+            "1.0 — оригинал\n"
+            "2.0 — двойное ускорение\n\n"
+            "Доступные значения: от 0.1 до 2.0"
+        )
+        return
     
-    if callback_query.data == 'ai_local':
-        response = await local_ai_assistant(question)
-        mode = "🧠 Локальный режим"
-    else:
-        response = await ai_assistant(question)
-        mode = "🤖 Режим ИИ (Hugging Face)"
+    # Парсим callback_data
+    parts = callback.data.split('_')
+    speed = float(parts[1])
+    mode = parts[2] if len(parts) > 2 else 'normal'
     
-    await status_msg.delete()
-    await callback_query.message.answer(
-        f"{mode}\n\n{response}",
-        parse_mode="Markdown"
-    )
-    await state.clear()
+    pitch_shift = mode == 'pitch'
+    reverb = mode == 'reverb'
+    
+    await process_audio(callback.message, audio_data, file_name, speed, pitch_shift, reverb)
 
-@dp.message(CreatePack.waiting_for_ai)
-async def handle_ai_question(message: Message, state: FSMContext):
-    if not message.text:
-        await message.answer("❌ Напиши текст!")
+async def process_audio(message, audio_data, file_name, speed, pitch_shift=False, reverb=False):
+    """Обрабатывает аудио и отправляет результат"""
+    try:
+        status_msg = await message.answer("⏳ Обрабатываю трек...")
+        
+        # Меняем скорость
+        result_audio = change_speed(audio_data, speed, pitch_shift, reverb)
+        
+        # Генерируем визуализацию
+        waveform = generate_waveform(audio_data)
+        
+        # Формируем название режима
+        mode_names = {
+            (0.7, False, False): "🐢 Слоу (0.7x)",
+            (1.5, False, False): "⚡ Спид (1.5x)",
+            (1.3, True, False): "🎧 Nightcore (1.3x + тон)",
+            (0.6, True, False): "🕰️ Винтаж (0.6x + тон)",
+            (0.8, False, True): "🎸 Фанк (0.8x + реверб)",
+            (0.5, False, True): "🌿 Эмбиент (0.5x + реверб)",
+            (1.0, False, False): "🎶 Оригинал",
+        }
+        
+        speed_text = mode_names.get((speed, pitch_shift, reverb), f"{speed}x")
+        
+        caption = (
+            f"🎵 **Готово!**\n\n"
+            f"Режим: `{speed_text}`\n"
+            f"Файл: `{file_name}`"
+        )
+        
+        # Отправляем аудио
+        await message.answer_audio(
+            audio=BufferedInputFile(result_audio.getvalue(), filename=f"speed_{speed}_{file_name}"),
+            caption=caption,
+            parse_mode="Markdown"
+        )
+        
+        # Отправляем визуализацию
+        if waveform:
+            await message.answer_photo(
+                photo=BufferedInputFile(waveform.getvalue(), filename="waveform.png"),
+                caption="📊 Визуализация трека"
+            )
+        
+        await status_msg.delete()
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка обработки: {str(e)}")
+
+@dp.callback_query(lambda c: c.data == 'visualize')
+async def process_visualize(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    
+    data = await state.get_data()
+    audio_data = data.get('audio_data')
+    
+    if not audio_data:
+        await callback.message.answer("❌ Аудио не найдено. Отправь трек заново.")
         return
     
-    await state.update_data(ai_question=message.text)
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🧠 Локально", callback_data="ai_local"),
-            InlineKeyboardButton(text="🤖 ИИ (HF)", callback_data="ai_hf")
-        ]
-    ])
+    try:
+        waveform = generate_waveform(audio_data)
+        if waveform:
+            await callback.message.answer_photo(
+                photo=BufferedInputFile(waveform.getvalue(), filename="waveform.png"),
+                caption="📊 Визуализация трека"
+            )
+        else:
+            await callback.message.answer("❌ Не удалось создать визуализацию.")
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+
+# ========== ОБРАБОТЧИК КАСТОМНОЙ СКОРОСТИ ==========
+@dp.message(AudioStates.waiting_for_audio)
+async def handle_custom_speed(message: Message, state: FSMContext):
+    try:
+        speed = float(message.text.strip())
+        if speed < 0.1 or speed > 2.0:
+            await message.answer("❌ Скорость должна быть от 0.1 до 2.0. Попробуй снова:")
+            return
+        
+        data = await state.get_data()
+        audio_data = data.get('audio_data')
+        file_name = data.get('file_name', 'audio.mp3')
+        
+        if not audio_data:
+            await message.answer("❌ Аудио не найдено. Отправь трек заново.")
+            await state.clear()
+            return
+        
+        await process_audio(message, audio_data, file_name, speed, pitch_shift=False, reverb=False)
+        await state.clear()
+        
+    except ValueError:
+        await message.answer("❌ Введи число, например: 1.5")
+
+# ========== АДМИН-КОМАНДА ==========
+@dp.message(Command("stats"))
+async def stats_command(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Нет доступа.")
+        return
     
     await message.answer(
-        f"❓
+        "📊 **Tenshi Audio Bot — Статистика**\n\n"
+        "• Версия: 1.0\n"
+        "• Статус: ✅ Онлайн"
+    )
+
+# ========== ДЛЯ RENDER ==========
+async def health_check(request):
+    return web.Response(text="🎵 Tenshi Audio Bot is alive!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 10000)
+    await site.start()
+    print("🌐 Web server started on port 10000")
+
+async def main():
+    await asyncio.sleep(3)
+    print("🎵 Tenshi Audio Bot запущен!")
+    print("⚡ Готов к обработке аудио!")
+    asyncio.create_task(start_web_server())
+    await dp.start_polling(bot, request_timeout=90)
+
+if __name__ == "__main__":
+    asyncio.run(main())
