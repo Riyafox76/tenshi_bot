@@ -21,6 +21,10 @@ BOT_TOKEN = "8658625238:AAGIfOAz3cuVBUNrjvOinFK_2QGpoiVihvk"
 ADMIN_ID = 5145527096
 REMOVE_BG_API_KEY = "PXqz6KQmZGPLSNJqVBhne55L"
 
+# ========== НАСТРОЙКИ БЕСПЛАТНОГО ИИ (Hugging Face) ==========
+# Токен берётся из переменных окружения на Render (безопасно!)
+HF_API_TOKEN = os.getenv("HF_API_TOKEN", "")
+
 MAX_CONCURRENT_TASKS = 2
 TASK_TIMEOUT = 90
 
@@ -66,33 +70,18 @@ DESIGN_TIPS = {
     'белый': '💡 К белому отлично подходят:\n• Любой цвет! Но особенно:\n• Черный — контраст\n• Золотой — элегантность\n• Пастельные тона — нежность'
 }
 
-AI_KNOWLEDGE = {
-    "цвет": {
-        "keywords": ["цвет", "цвета", "палитра", "сочетание", "оттенок", "тон"],
-        "response": "🎨 **Советы по цвету:**\n\n• Используй цветовой круг для подбора гармоничных сочетаний\n• Комплементарные цвета дают максимальный контраст\n• Аналоговые цвета создают спокойную гармонию\n• Триадные цвета — динамичные сочетания"
-    },
-    "логотип": {
-        "keywords": ["логотип", "лого", "бренд", "айдентика"],
-        "response": "💡 **Советы по логотипу:**\n\n• Простота — ключ к запоминанию\n• Используй не более 2-3 цветов\n• Шрифт должен читаться в любом размере\n• Проверь логотип в чёрно-белом варианте"
-    },
-    "шрифт": {
-        "keywords": ["шрифт", "шрифты", "типографика", "гарнитура"],
-        "response": "📝 **Советы по типографике:**\n\n• Не используй более 2-3 шрифтов в проекте\n• Контрастные шрифты создают динамику\n• Проверяй читаемость на разных размерах\n• Для заголовков используй display-шрифты"
-    },
-    "композиция": {
-        "keywords": ["композиция", "верстка", "макет", "сетка", "расположение"],
-        "response": "📐 **Советы по композиции:**\n\n• Правило третей — размещай ключевые элементы на пересечении линий\n• Используй направляющие линии для движения глаз\n• Создавай иерархию через размер и цвет\n• Оставляй достаточно пустого пространства"
-    },
-    "default": {
-        "keywords": [],
-        "response": "🤔 Я пока не знаю точного ответа.\n\nМогу помочь с темами:\n• Цвет и палитры 🎨\n• Логотипы и брендинг 💡\n• Шрифты и типографика 📝\n• Композиция и верстка 📐\n\nПопробуй переформулировать вопрос!"
-    }
-}
-
+# ========== РАСШИРЕННЫЙ СПИСОК ЧЕЛЛЕНДЖЕЙ ==========
 CHALLENGES = [
     {"title": "Логотип для кофейни", "description": "Сделай логотип для кофейни с капибарами", "style": "Киберпанк + ретро-футуризм", "colors": ["#00D4FF", "#9B59B6", "#1A1A1A"], "format": "512×512 px"},
-    {"title": "Иконка для приложения", "description": "Создай иконку для приложения 'Космическое такси'", "style": "Минимализм с элементами неона", "colors": ["#FF6B6B", "#4ECDC4", "#2C3E50"], "format": "1024×1024 px"},
+    {"title": "Иконка для приложения", "description": "Создай иконку для приложения 'Космическое такси'", "style": "Минимализм + неон", "colors": ["#FF6B6B", "#4ECDC4", "#2C3E50"], "format": "1024×1024 px"},
     {"title": "Постер для концерта", "description": "Дизайн постера для джазового фестиваля", "style": "Винтаж + современная типографика", "colors": ["#F39C12", "#8E44AD", "#ECF0F1"], "format": "A4 (210×297 мм)"},
+    {"title": "Упаковка для чая", "description": "Разработай дизайн упаковки для коллекции травяных чаёв", "style": "Ботаника + акварель", "colors": ["#27AE60", "#F1C40F", "#FFFFFF"], "format": "Коробка 120×80×60 мм"},
+    {"title": "Интерфейс для погодного приложения", "description": "Нарисуй экран погоды с анимацией", "style": "Глассморфизм (Glassmorphism)", "colors": ["#74B9FF", "#DFE6E9", "#2D3436"], "format": "375×812 px (iPhone X)"},
+    {"title": "Обложка для альбома", "description": "Сделай обложку для альбома в жанре Lo-Fi", "style": "Аналоговый синтвейв + городской пейзаж", "colors": ["#2C3E50", "#E74C3C", "#F1C40F"], "format": "3000×3000 px"},
+    {"title": "Презентация для стартапа", "description": "Дизайн 3-х слайдов для стартапа по ИИ", "style": "Минимализм + дата-визуализация", "colors": ["#6C5CE7", "#00CEC9", "#DFE6E9"], "format": "1920×1080 px"},
+    {"title": "Вывеска для магазина", "description": "Дизайн вывески для магазина винила", "style": "Неон + ретро-шрифты", "colors": ["#FF0050", "#00E5FF", "#1A1A1A"], "format": "2000×1000 px"},
+    {"title": "Иллюстрация для статьи", "description": "Создай иллюстрацию для статьи о космосе", "style": "Векторная графика + футуризм", "colors": ["#0C0C1D", "#6C5CE7", "#FDCB6E"], "format": "1200×800 px"},
+    {"title": "Дизайн для соцсетей", "description": "Сделай шаблон для Instagram-сторис о психологии", "style": "Пастельные тона + минимализм", "colors": ["#FFB8B8", "#A8D8EA", "#FFD3B4"], "format": "1080×1920 px"},
 ]
 
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
@@ -367,16 +356,58 @@ async def remove_background(image_bytes):
         logging.error(f"Remove.bg error: {e}")
         return None
 
+# ========== БЕСПЛАТНЫЙ ИИ (Hugging Face) ==========
+async def ai_assistant(prompt):
+    """Бесплатный ИИ-помощник через Hugging Face"""
+    if HF_API_TOKEN:
+        try:
+            headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
+            data = {
+                "inputs": f"Ты — профессиональный дизайнер-ассистент Tenshi. Ответь кратко, полезно и по делу: {prompt}",
+                "parameters": {"max_new_tokens": 250}
+            }
+            
+            response = requests.post(
+                "https://api-inference.huggingface.co/models/google/flan-t5-base",
+                headers=headers,
+                json=data,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result[0]['generated_text']
+            else:
+                return await local_ai_assistant(prompt)
+                
+        except Exception as e:
+            logging.error(f"HF error: {e}")
+            return await local_ai_assistant(prompt)
+    
+    # Без токена — локальный ИИ
+    return await local_ai_assistant(prompt)
+
 async def local_ai_assistant(prompt):
+    """Локальный ИИ на базе знаний (работает без интернета)"""
     prompt_lower = prompt.lower()
-    best_score = 0
-    best_key = "default"
-    for key, data in AI_KNOWLEDGE.items():
-        score = sum(1 for kw in data["keywords"] if kw in prompt_lower)
-        if score > best_score:
-            best_score = score
-            best_key = key
-    return AI_KNOWLEDGE[best_key]["response"]
+    
+    if any(word in prompt_lower for word in ["цвет", "цвета", "палитра", "сочетание", "оттенок"]):
+        return "🎨 **Советы по цвету:**\n\n• Используй цветовой круг для подбора гармоничных сочетаний\n• Комплементарные цвета дают максимальный контраст\n• Аналоговые цвета создают спокойную гармонию\n• Триадные цвета — динамичные сочетания\n• Проверь контраст через /contrast"
+    
+    elif any(word in prompt_lower for word in ["логотип", "лого", "бренд", "айдентика"]):
+        return "💡 **Советы по логотипу:**\n\n• Простота — ключ к запоминанию\n• Используй не более 2-3 цветов\n• Шрифт должен читаться в любом размере\n• Проверь логотип в чёрно-белом варианте\n• Проверь в маленьком размере (аватарка)"
+    
+    elif any(word in prompt_lower for word in ["шрифт", "шрифты", "типографика", "гарнитура"]):
+        return "📝 **Советы по типографике:**\n\n• Не используй более 2-3 шрифтов в проекте\n• Контрастные шрифты создают динамику\n• Проверяй читаемость на разных размерах\n• Для заголовков используй display-шрифты\n• Для текста — шрифты с хорошей читаемостью"
+    
+    elif any(word in prompt_lower for word in ["композиция", "верстка", "макет", "сетка", "расположение"]):
+        return "📐 **Советы по композиции:**\n\n• Правило третей — размещай ключевые элементы на пересечении линий\n• Используй направляющие линии для движения глаз\n• Создавай иерархию через размер и цвет\n• Оставляй достаточно пустого пространства"
+    
+    elif any(word in prompt_lower for word in ["ux", "ui", "интерфейс", "приложение", "сайт", "юзабилити"]):
+        return "📱 **Советы по UX/UI:**\n\n• Пользователь должен понимать интерфейс без инструкции\n• Кнопки должны быть заметными и удобными\n• Цвета должны быть контрастными для читаемости\n• Используй привычные паттерны (корзина, поиск)"
+    
+    else:
+        return "🤔 **Я пока не знаю точного ответа.**\n\nМогу помочь с темами:\n• Цвет и палитры 🎨\n• Логотипы и брендинг 💡\n• Шрифты и типографика 📝\n• Композиция и верстка 📐\n• UX/UI интерфейсы 📱\n\n**Попробуй переформулировать вопрос** или спроси про одну из этих тем."
 
 # ========== КОМАНДЫ ==========
 @dp.message(Command("start"))
@@ -424,6 +455,85 @@ async def start(message: Message):
             "/search [тег] - Найти паки"
         )
 
+# ========== НОВЫЙ /ask (расширенный) ==========
+@dp.message(Command("ask"))
+async def ask_command(message: Message):
+    question = message.text.replace('/ask', '').strip()
+    if not question:
+        await message.answer(
+            "❓ Напиши вопрос после команды:\n"
+            "/ask как подобрать шрифты?\n\n"
+            "Я знаю про: цвета, логотипы, шрифты, композицию, UX/UI."
+        )
+        return
+    
+    response = None
+    if any(word in question.lower() for word in ["цвет", "палитр", "оттенок", "сочетание"]):
+        response = "🎨 **Советы по цвету:**\n\n• Используй цветовой круг\n• Комплементарные цвета дают контраст\n• Аналоговые цвета — спокойная гармония\n• Проверяй контраст через /contrast"
+    elif any(word in question.lower() for word in ["логотип", "лого", "бренд", "айдентика"]):
+        response = "💡 **Советы по логотипу:**\n\n• Простота — ключ к запоминанию\n• Не более 2-3 цветов\n• Шрифт должен читаться в любом размере\n• Проверь в чёрно-белом варианте"
+    elif any(word in question.lower() for word in ["шрифт", "типографик", "гарнитур", "начертани"]):
+        response = "📝 **Советы по типографике:**\n\n• Не более 2-3 шрифтов в проекте\n• Контрастные шрифты создают динамику\n• Проверяй читаемость на разных размерах\n• Для заголовков используй display-шрифты"
+    elif any(word in question.lower() for word in ["композици", "верстк", "макет", "сетк", "расположени"]):
+        response = "📐 **Советы по композиции:**\n\n• Правило третей — ключевые элементы на пересечении линий\n• Направляющие линии для движения глаз\n• Иерархия через размер и цвет\n• Пустое пространство — не враг"
+    elif any(word in question.lower() for word in ["ux", "ui", "интерфейс", "приложени", "сайт", "юзабилити"]):
+        response = "📱 **Советы по UX/UI:**\n\n• Пользователь должен понимать интерфейс без инструкции\n• Кнопки должны быть заметными и удобными\n• Цвета должны быть контрастными для читаемости\n• Используй привычные паттерны"
+    else:
+        response = "🤔 Я пока знаю советы по темам:\n• Цвета 🎨\n• Логотипы 💡\n• Шрифты 📝\n• Композиция 📐\n• UX/UI 📱\n\nПопробуй переформулировать вопрос или спроси про одну из этих тем."
+    
+    await message.answer(response)
+
+# ========== НОВЫЙ /challenge (с перемешиванием) ==========
+@dp.message(Command("challenge"))
+async def challenge_command(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    challenge = random.choice(CHALLENGES)
+    response = (
+        f"🎨 **Дизайн-челлендж!**\n\n"
+        f"**Задача:** {challenge['title']}\n"
+        f"**Описание:** {challenge['description']}\n"
+        f"**Стиль:** {challenge['style']}\n"
+        f"**Цвета:** " + ", ".join(challenge['colors']) + "\n"
+        f"**Формат:** {challenge['format']}\n\n"
+        f"✨ Твоя очередь! Удачи!"
+    )
+    await message.answer(response)
+
+# ========== НОВЫЙ /ai (с бесплатным ИИ) ==========
+@dp.message(Command("ai"))
+async def ai_command(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    args = message.text.replace('/ai', '').strip()
+    if not args:
+        await state.set_state(CreatePack.waiting_for_ai)
+        await message.answer(
+            "🤖 **ИИ-помощник по дизайну**\n\n"
+            "Напиши свой вопрос.\n"
+            "Например:\n"
+            "• Как подобрать цвета для логотипа?\n"
+            "• Какие шрифты сочетаются?\n"
+            "• Что такое композиция?"
+        )
+        return
+    await process_with_queue(_process_ai, message, state)
+
+async def _process_ai(message: Message, state: FSMContext):
+    response = await ai_assistant(message.text)
+    await message.answer(response, parse_mode="Markdown")
+    await state.clear()
+
+@dp.message(CreatePack.waiting_for_ai)
+async def handle_ai(message: Message, state: FSMContext):
+    if not message.text:
+        await message.answer("❌ Напиши текст!")
+        return
+    await process_with_queue(_process_ai, message, state)
+
+# ========== ОСТАЛЬНЫЕ КОМАНДЫ (без изменений) ==========
 @dp.message(Command("removebg"))
 async def removebg_command(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -468,38 +578,6 @@ async def _process_removebg(message: Message, state: FSMContext):
         await state.clear()
     except Exception as e:
         await message.answer(f"❌ Ошибка: {str(e)}")
-
-@dp.message(Command("ai"))
-async def ai_command(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Нет доступа.")
-        return
-    args = message.text.replace('/ai', '').strip()
-    if not args:
-        await state.set_state(CreatePack.waiting_for_ai)
-        await message.answer(
-            "🤖 **ИИ-помощник по дизайну**\n\n"
-            "Напиши свой вопрос.\n"
-            "Например:\n"
-            "• Как подобрать цвета для логотипа?\n"
-            "• Какие шрифты сочетаются?\n"
-            "• Что такое композиция?"
-        )
-        return
-    response = await local_ai_assistant(args)
-    await message.answer(response, parse_mode="Markdown")
-
-@dp.message(CreatePack.waiting_for_ai)
-async def handle_ai(message: Message, state: FSMContext):
-    if not message.text:
-        await message.answer("❌ Напиши текст!")
-        return
-    await process_with_queue(_process_ai, message, state)
-
-async def _process_ai(message: Message, state: FSMContext):
-    response = await local_ai_assistant(message.text)
-    await message.answer(response, parse_mode="Markdown")
-    await state.clear()
 
 @dp.message(Command("palette"))
 async def palette_command(message: Message, state: FSMContext):
@@ -624,29 +702,6 @@ async def _process_font(message: Message, state: FSMContext):
         await message.answer("❌ Не удалось создать превью шрифтов. Попробуй другой текст.")
     await state.clear()
 
-@dp.message(Command("ask"))
-async def ask_command(message: Message):
-    question = message.text.replace('/ask', '').strip()
-    if not question:
-        await message.answer(
-            "❓ Напиши вопрос после команды:\n"
-            "/ask какой цвет подойдет к синему?\n\n"
-            "Я знаю про цвета: синий, красный, зеленый, черный, белый"
-        )
-        return
-    response = None
-    for color in DESIGN_TIPS:
-        if color in question.lower():
-            response = DESIGN_TIPS[color]
-            break
-    if response:
-        await message.answer(response)
-    else:
-        await message.answer(
-            "🤔 Я пока знаю советы только про цвета.\n"
-            "Попробуй спросить про: синий, красный, зеленый, черный, белый."
-        )
-
 @dp.message(Command("maketext"))
 async def make_text_emoji(message: Message):
     text = message.text.replace('/maketext', '').strip()
@@ -661,7 +716,6 @@ async def make_text_emoji(message: Message):
     result = text_to_emoji(text)
     await message.answer(f"✨ {result}")
 
-# ========== ОСТАЛЬНЫЕ КОМАНДЫ ==========
 @dp.message(Command("get"))
 async def get_pack(message: Message):
     try:
@@ -808,23 +862,6 @@ async def handle_contrast(message: Message, state: FSMContext):
         await state.clear()
     else:
         await message.answer("❌ Отправь **два** цвета через пробел! Например: `#FF5733 #FFFFFF`")
-
-@dp.message(Command("challenge"))
-async def challenge_command(message: Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Нет доступа.")
-        return
-    challenge = random.choice(CHALLENGES)
-    response = (
-        f"🎨 **Дизайн-челлендж!**\n\n"
-        f"**Задача:** {challenge['title']}\n"
-        f"**Описание:** {challenge['description']}\n"
-        f"**Стиль:** {challenge['style']}\n"
-        f"**Цвета:** " + ", ".join(challenge['colors']) + "\n"
-        f"**Формат:** {challenge['format']}\n\n"
-        f"✨ Твоя очередь! Удачи!"
-    )
-    await message.answer(response)
 
 @dp.message(Command("pxrem"))
 async def pxrem_command(message: Message):
@@ -1046,7 +1083,7 @@ async def main():
     task_queue.start()
     print("🎨 Tenshi Design Bot v2.0 запущен!")
     print(f"⚙️ Очередь: {MAX_CONCURRENT_TASKS} задач, таймаут {TASK_TIMEOUT} сек")
-    print("✨ Remove.bg + локальный ИИ активны!")
+    print("✨ Remove.bg + бесплатный ИИ (Hugging Face) активны!")
     asyncio.create_task(start_web_server())
     await dp.start_polling(bot, request_timeout=90)
 
