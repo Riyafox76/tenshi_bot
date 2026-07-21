@@ -356,36 +356,73 @@ async def remove_background(image_bytes):
         logging.error(f"Remove.bg error: {e}")
         return None
 
-# ========== БЕСПЛАТНЫЙ ИИ (Hugging Face) ==========
+# ========== ИСПРАВЛЕННЫЙ БЕСПЛАТНЫЙ ИИ (Hugging Face) ==========
 async def ai_assistant(prompt):
     """Бесплатный ИИ-помощник через Hugging Face"""
-    if HF_API_TOKEN:
-        try:
-            headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-            data = {
-                "inputs": f"Ты — профессиональный дизайнер-ассистент Tenshi. Ответь кратко, полезно и по делу: {prompt}",
-                "parameters": {"max_new_tokens": 250}
-            }
+    if not HF_API_TOKEN:
+        logging.warning("⚠️ HF_API_TOKEN не найден. Использую локальный режим.")
+        return await local_ai_assistant(prompt)
+    
+    try:
+        headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
+        data = {
+            "inputs": f"Ты — профессиональный дизайнер-ассистент Tenshi. Ответь кратко, полезно и по делу: {prompt}",
+            "parameters": {"max_new_tokens": 150, "temperature": 0.7}
+        }
+        
+        logging.info(f"📤 Отправка запроса в HF: {prompt[:30]}...")
+        
+        response = requests.post(
+            "https://api-inference.huggingface.co/models/google/flan-t5-base",
+            headers=headers,
+            json=data,
+            timeout=30
+        )
+        
+        logging.info(f"📥 HF статус: {response.status_code}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            logging.info(f"📄 HF ответ: {str(result)[:200]}")
             
+            if isinstance(result, list) and len(result) > 0:
+                generated = result[0].get('generated_text')
+                if generated:
+                    return generated
+                else:
+                    logging.warning("⚠️ HF ответ без текста")
+                    return await local_ai_assistant(prompt)
+            else:
+                logging.warning(f"⚠️ HF неожиданный формат ответа: {type(result)}")
+                return await local_ai_assistant(prompt)
+        
+        elif response.status_code == 503:
+            logging.warning("⏳ HF модель загружается (503). Повтор через 5 сек...")
+            await asyncio.sleep(5)
             response = requests.post(
                 "https://api-inference.huggingface.co/models/google/flan-t5-base",
                 headers=headers,
                 json=data,
                 timeout=30
             )
-            
             if response.status_code == 200:
                 result = response.json()
-                return result[0]['generated_text']
-            else:
-                return await local_ai_assistant(prompt)
-                
-        except Exception as e:
-            logging.error(f"HF error: {e}")
+                if isinstance(result, list) and len(result) > 0:
+                    generated = result[0].get('generated_text')
+                    if generated:
+                        return generated
             return await local_ai_assistant(prompt)
-    
-    # Без токена — локальный ИИ
-    return await local_ai_assistant(prompt)
+            
+        else:
+            logging.warning(f"⚠️ HF ошибка {response.status_code}: {response.text[:200]}")
+            return await local_ai_assistant(prompt)
+            
+    except requests.exceptions.Timeout:
+        logging.error("⏰ HF таймаут (30 сек). Использую локальный режим.")
+        return await local_ai_assistant(prompt)
+    except Exception as e:
+        logging.error(f"❌ HF исключение: {e}")
+        return await local_ai_assistant(prompt)
 
 async def local_ai_assistant(prompt):
     """Локальный ИИ на базе знаний (работает без интернета)"""
