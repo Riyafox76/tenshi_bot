@@ -110,7 +110,7 @@ bot = Bot(token=BOT_TOKEN)
 
 os.makedirs('fonts', exist_ok=True)
 
-# ========== ОЧЕРЕДЬ ЗАПРОСОВ ==========
+# ========== КЛАСС ОЧЕРЕДИ ==========
 class TaskQueue:
     def __init__(self, max_concurrent=MAX_CONCURRENT_TASKS):
         self.queue = asyncio.Queue()
@@ -129,12 +129,10 @@ class TaskQueue:
         """Воркер, который выполняет задачи из очереди"""
         while self.is_running:
             try:
-                # Проверяем, есть ли свободные слоты
                 if len(self.active_tasks) >= self.max_concurrent:
                     await asyncio.sleep(0.1)
                     continue
 
-                # Берём задачу из очереди
                 try:
                     task_func, args, kwargs, future = await asyncio.wait_for(
                         self.queue.get(), timeout=1.0
@@ -142,7 +140,6 @@ class TaskQueue:
                 except asyncio.TimeoutError:
                     continue
 
-                # Запускаем задачу
                 async def run_task():
                     try:
                         result = await asyncio.wait_for(
@@ -174,21 +171,17 @@ class TaskQueue:
         if self._worker_task:
             self._worker_task.cancel()
 
-# Создаём глобальную очередь
-task_queue = TaskQueue()
-task_queue.start()
+# Глобальная переменная для очереди (будет создана в main)
+task_queue = None
 
 # ========== ФУНКЦИЯ ДЛЯ ОЧЕРЕДИ ==========
 async def queue_handler(func):
     """Декоратор для обработки команд через очередь"""
     async def wrapper(message: Message, *args, **kwargs):
-        # Отправляем сообщение о постановке в очередь
         status_msg = await message.answer("⏳ Ваш запрос добавлен в очередь. Ожидайте...")
         
         try:
-            # Добавляем задачу в очередь
             result = await task_queue.add_task(func, message, *args, **kwargs)
-            # Удаляем сообщение о статусе
             await status_msg.delete()
             return result
         except asyncio.TimeoutError:
@@ -224,7 +217,6 @@ def init_db():
         )
     ''')
     
-    # Добавляем новые колонки, если их нет
     try:
         cursor.execute('ALTER TABLE packs ADD COLUMN downloads INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
@@ -421,7 +413,49 @@ def create_preview(image_bytes):
     output.seek(0)
     return output
 
-# ========== КОМАНДЫ С ОЧЕРЕДЬЮ ==========
+# ========== КОМАНДЫ ==========
+
+@dp.message(Command("start"))
+async def start(message: Message):
+    if is_admin(message.from_user.id):
+        await message.answer(
+            "🎨 Привет, Tenshi!\n\n"
+            "📦 Стикеры и эмодзи:\n"
+            "/newpack - Создать пак стикеров\n"
+            "/newemoji - Создать пак эмодзи\n"
+            "/get [название] - Получить пак\n"
+            "/search [тег] - Найти паки по тегу\n"
+            "/list - Мои паки\n"
+            "/delete [название] - Удалить пак\n"
+            "/stats - Статистика\n\n"
+            "🎨 Дизайн-инструменты:\n"
+            "/palette - Вырезать цвета из картинки\n"
+            "/preview - Показать стикер в кружке\n"
+            "/font [текст] - Красивые шрифты\n"
+            "/ask [вопрос] - Советы по дизайну\n"
+            "/contrast - Проверить контраст цветов\n"
+            "/challenge - Получить дизайн-задачу\n"
+            "/pxrem - Конвертер PX ↔ REM\n"
+            "/golden - Золотое сечение\n\n"
+            "📝 Текст:\n"
+            "/maketext [текст] - Текст в эмодзи"
+        )
+    else:
+        await message.answer(
+            "✦ Привет!\n\n"
+            "🎨 Дизайн-инструменты:\n"
+            "/palette - Вырезать цвета из картинки\n"
+            "/preview - Показать стикер в кружке\n"
+            "/font [текст] - Красивые шрифты\n"
+            "/ask [вопрос] - Советы по дизайну\n"
+            "/contrast - Проверить контраст цветов\n"
+            "/pxrem - Конвертер PX ↔ REM\n"
+            "/golden - Золотое сечение\n"
+            "/maketext [текст] - Текст в эмодзи\n\n"
+            "📦 Получить пак:\n"
+            "/get [название] - Получить ссылку на пак\n"
+            "/search [тег] - Найти паки по тегу"
+        )
 
 @dp.message(Command("palette"))
 async def palette_command(message: Message, state: FSMContext):
@@ -587,50 +621,6 @@ async def handle_font(message: Message, state: FSMContext):
     
     await state.clear()
 
-# ========== ОСТАЛЬНЫЕ КОМАНДЫ ==========
-
-@dp.message(Command("start"))
-async def start(message: Message):
-    if is_admin(message.from_user.id):
-        await message.answer(
-            "🎨 Привет, Tenshi!\n\n"
-            "📦 Стикеры и эмодзи:\n"
-            "/newpack - Создать пак стикеров\n"
-            "/newemoji - Создать пак эмодзи\n"
-            "/get [название] - Получить пак\n"
-            "/search [тег] - Найти паки по тегу\n"
-            "/list - Мои паки\n"
-            "/delete [название] - Удалить пак\n"
-            "/stats - Статистика\n\n"
-            "🎨 Дизайн-инструменты:\n"
-            "/palette - Вырезать цвета из картинки\n"
-            "/preview - Показать стикер в кружке\n"
-            "/font [текст] - Красивые шрифты\n"
-            "/ask [вопрос] - Советы по дизайну\n"
-            "/contrast - Проверить контраст цветов\n"
-            "/challenge - Получить дизайн-задачу\n"
-            "/pxrem - Конвертер PX ↔ REM\n"
-            "/golden - Золотое сечение\n\n"
-            "📝 Текст:\n"
-            "/maketext [текст] - Текст в эмодзи"
-        )
-    else:
-        await message.answer(
-            "✦ Привет!\n\n"
-            "🎨 Дизайн-инструменты:\n"
-            "/palette - Вырезать цвета из картинки\n"
-            "/preview - Показать стикер в кружке\n"
-            "/font [текст] - Красивые шрифты\n"
-            "/ask [вопрос] - Советы по дизайну\n"
-            "/contrast - Проверить контраст цветов\n"
-            "/pxrem - Конвертер PX ↔ REM\n"
-            "/golden - Золотое сечение\n"
-            "/maketext [текст] - Текст в эмодзи\n\n"
-            "📦 Получить пак:\n"
-            "/get [название] - Получить ссылку на пак\n"
-            "/search [тег] - Найти паки по тегу"
-        )
-
 @dp.message(Command("get"))
 async def get_pack(message: Message):
     try:
@@ -646,7 +636,6 @@ async def get_pack(message: Message):
         
         if result:
             pack_link, count, pack_type, downloads, tags = result
-            # Увеличиваем счётчик скачиваний
             cursor.execute('UPDATE packs SET downloads = downloads + 1 WHERE pack_name = ?', (pack_name,))
             conn.commit()
             
@@ -684,7 +673,7 @@ async def search_packs(message: Message):
         return
     
     text = f"🔍 **Найдено по тегу '{tag}':**\n\n"
-    for name, count, pack_type, downloads, tags in packs[:10]:  # Показываем топ-10
+    for name, count, pack_type, downloads, tags in packs[:10]:
         emoji = "🎨" if pack_type == 'sticker' else "✨"
         text += f"{emoji} `{name}` — {count} {'стикеров' if pack_type == 'sticker' else 'эмодзи'} (⬇️{downloads})\n"
     
@@ -1045,7 +1034,6 @@ async def stats(message: Message):
     cursor.execute('SELECT SUM(downloads) FROM packs')
     total_downloads = cursor.fetchone()[0] or 0
     
-    # Топ-5 популярных паков
     cursor.execute('SELECT pack_name, downloads, pack_type FROM packs ORDER BY downloads DESC LIMIT 5')
     top_packs = cursor.fetchall()
     
@@ -1444,6 +1432,12 @@ async def start_web_server():
 
 async def main():
     await asyncio.sleep(3)
+    
+    # СОЗДАЁМ ОЧЕРЕДЬ ЗДЕСЬ (внутри event loop)
+    global task_queue
+    task_queue = TaskQueue()
+    task_queue.start()
+    
     print("🤖 Бот запущен с поддержкой стикеров, эмодзи и дизайн-инструментов!")
     print(f"⚙️ Очередь: {MAX_CONCURRENT_TASKS} задач одновременно, таймаут {TASK_TIMEOUT} сек")
     
