@@ -491,11 +491,12 @@ async def ai_command(message: Message, state: FSMContext):
     await message.answer(response, parse_mode="Markdown")
 
 @dp.message(CreatePack.waiting_for_ai)
-@queue_handler
 async def handle_ai(message: Message, state: FSMContext):
     if not message.text:
         await message.answer("❌ Напиши текст!")
         return
+    await process_with_queue(_process_ai, message, state)
+async def _process_ai(message: Message, state: FSMContext):
     response = await local_ai_assistant(message.text)
     await message.answer(response, parse_mode="Markdown")
     await state.clear()
