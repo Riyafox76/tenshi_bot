@@ -1,31 +1,42 @@
 import logging
 import sqlite3
 import os
+import random
+import asyncio
 from datetime import datetime
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageFont
 import io
 import re
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Message, FSInputFile
+from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-import asyncio
 from aiohttp import web
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = "8658625238:AAGIfOAz3cuVBUNrjvOinFK_2QGpoiVihvk"
 ADMIN_ID = 5145527096
 
+# ========== НАСТРОЙКИ ОЧЕРЕДИ ==========
+MAX_CONCURRENT_TASKS = 2  # Сколько задач выполнять одновременно
+TASK_TIMEOUT = 60  # Таймаут на выполнение одной задачи (сек)
+
 # ========== СОСТОЯНИЯ ДЛЯ FSM ==========
 class CreatePack(StatesGroup):
     waiting_for_images = State()
     waiting_for_pack_name = State()
+    waiting_for_pack_tags = State()
     waiting_for_emoji_images = State()
     waiting_for_emoji_pack_name = State()
+    waiting_for_emoji_pack_tags = State()
     waiting_for_palette = State()
     waiting_for_preview = State()
+    waiting_for_font = State()
+    waiting_for_contrast = State()
+    waiting_for_pxrem = State()
+    waiting_for_golden = State()
 
 # ========== БАЗА ЭМОДЗИ-КОНВЕРТАЦИИ ==========
 LETTER_TO_EMOJI = {
@@ -44,14 +55,6 @@ TEXT_TO_EMOJI = {
     ':surprised:': '😮', ':sleep:': '😴', ':pray:': '🙏'
 }
 
-FONT_STYLES = {
-    '𝒽ℯ𝓁𝓁ℴ': 'математический',
-    '𝕙𝕖𝕝𝕝𝕠': 'двойной',
-    'ᕼᗴᒪᒪᗝ': 'канадский',
-    'ʜᴇʟʟᴏ': 'капитель',
-    '🅷🅴🅻🅻🅾': 'кружочки'
-}
-
 DESIGN_TIPS = {
     'синий': '💡 К синему отлично подходят:\n• Оранжевый (#FFA500) — для контраста\n• Белый (#FFFFFF) — для чистоты\n• Желтый (#FFD700) — для теплоты\n• Фиолетовый (#8B00FF) — для глубины',
     'красный': '💡 К красному отлично подходят:\n• Белый — для контраста\n• Черный — для строгости\n• Золотой — для роскоши',
@@ -60,11 +63,140 @@ DESIGN_TIPS = {
     'белый': '💡 К белому отлично подходят:\n• Любой цвет! Но особенно:\n• Черный — контраст\n• Золотой — элегантность\n• Пастельные тона — нежность'
 }
 
+# ========== БАЗА ДЛЯ ЧЕЛЛЕНДЖЕЙ ==========
+CHALLENGES = [
+    {
+        "title": "Логотип для кофейни",
+        "description": "Сделай логотип для кофейни с капибарами",
+        "style": "Киберпанк + ретро-футуризм",
+        "colors": ["#00D4FF", "#9B59B6", "#1A1A1A"],
+        "format": "512×512 px"
+    },
+    {
+        "title": "Иконка для приложения",
+        "description": "Создай иконку для приложения 'Космическое такси'",
+        "style": "Минимализм с элементами неона",
+        "colors": ["#FF6B6B", "#4ECDC4", "#2C3E50"],
+        "format": "1024×1024 px"
+    },
+    {
+        "title": "Постер для концерта",
+        "description": "Дизайн постера для джазового фестиваля",
+        "style": "Винтаж + современная типографика",
+        "colors": ["#F39C12", "#8E44AD", "#ECF0F1"],
+        "format": "A4 (210×297 мм)"
+    },
+    {
+        "title": "Упаковка для чая",
+        "description": "Разработай дизайн упаковки для коллекции чаёв",
+        "style": "Ботаника + акварель",
+        "colors": ["#27AE60", "#F1C40F", "#FFFFFF"],
+        "format": "Коробка 120×80×60 мм"
+    },
+    {
+        "title": "Интерфейс для погодного приложения",
+        "description": "Нарисуй экран погоды с анимацией",
+        "style": "Глассморфизм (Glassmorphism)",
+        "colors": ["#74B9FF", "#DFE6E9", "#2D3436"],
+        "format": "375×812 px (iPhone X)"
+    }
+]
+
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
 logging.basicConfig(level=logging.INFO)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 bot = Bot(token=BOT_TOKEN)
+
+os.makedirs('fonts', exist_ok=True)
+
+# ========== ОЧЕРЕДЬ ЗАПРОСОВ ==========
+class TaskQueue:
+    def __init__(self, max_concurrent=MAX_CONCURRENT_TASKS):
+        self.queue = asyncio.Queue()
+        self.active_tasks = set()
+        self.max_concurrent = max_concurrent
+        self.is_running = True
+        self._worker_task = None
+
+    async def add_task(self, task_func, *args, **kwargs):
+        """Добавить задачу в очередь"""
+        future = asyncio.Future()
+        await self.queue.put((task_func, args, kwargs, future))
+        return await future
+
+    async def _worker(self):
+        """Воркер, который выполняет задачи из очереди"""
+        while self.is_running:
+            try:
+                # Проверяем, есть ли свободные слоты
+                if len(self.active_tasks) >= self.max_concurrent:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                # Берём задачу из очереди
+                try:
+                    task_func, args, kwargs, future = await asyncio.wait_for(
+                        self.queue.get(), timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    continue
+
+                # Запускаем задачу
+                async def run_task():
+                    try:
+                        result = await asyncio.wait_for(
+                            task_func(*args, **kwargs),
+                            timeout=TASK_TIMEOUT
+                        )
+                        future.set_result(result)
+                    except Exception as e:
+                        future.set_exception(e)
+                    finally:
+                        self.active_tasks.discard(asyncio.current_task())
+                        self.queue.task_done()
+
+                task = asyncio.create_task(run_task())
+                self.active_tasks.add(task)
+
+            except Exception as e:
+                logging.error(f"Ошибка в воркере очереди: {e}")
+                await asyncio.sleep(0.5)
+
+    def start(self):
+        """Запускает воркер"""
+        if self._worker_task is None or self._worker_task.done():
+            self._worker_task = asyncio.create_task(self._worker())
+
+    def stop(self):
+        """Останавливает воркер"""
+        self.is_running = False
+        if self._worker_task:
+            self._worker_task.cancel()
+
+# Создаём глобальную очередь
+task_queue = TaskQueue()
+task_queue.start()
+
+# ========== ФУНКЦИЯ ДЛЯ ОЧЕРЕДИ ==========
+async def queue_handler(func):
+    """Декоратор для обработки команд через очередь"""
+    async def wrapper(message: Message, *args, **kwargs):
+        # Отправляем сообщение о постановке в очередь
+        status_msg = await message.answer("⏳ Ваш запрос добавлен в очередь. Ожидайте...")
+        
+        try:
+            # Добавляем задачу в очередь
+            result = await task_queue.add_task(func, message, *args, **kwargs)
+            # Удаляем сообщение о статусе
+            await status_msg.delete()
+            return result
+        except asyncio.TimeoutError:
+            await status_msg.edit_text("❌ Время выполнения задачи истекло. Попробуйте позже.")
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
+    
+    return wrapper
 
 # ========== БАЗА ДАННЫХ ==========
 def init_db():
@@ -76,6 +208,8 @@ def init_db():
             pack_name TEXT UNIQUE,
             pack_link TEXT,
             sticker_count INTEGER,
+            downloads INTEGER DEFAULT 0,
+            tags TEXT DEFAULT '',
             created_at TEXT,
             creator_id INTEGER,
             pack_type TEXT DEFAULT 'sticker'
@@ -89,6 +223,17 @@ def init_db():
             pack_type TEXT DEFAULT 'sticker'
         )
     ''')
+    
+    # Добавляем новые колонки, если их нет
+    try:
+        cursor.execute('ALTER TABLE packs ADD COLUMN downloads INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute('ALTER TABLE packs ADD COLUMN tags TEXT DEFAULT ""')
+    except sqlite3.OperationalError:
+        pass
+    
     conn.commit()
     conn.close()
 
@@ -96,6 +241,8 @@ init_db()
 
 def is_admin(user_id):
     return user_id == ADMIN_ID
+
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
 def convert_to_sticker(image_bytes):
     img = Image.open(io.BytesIO(image_bytes))
@@ -144,49 +291,94 @@ def text_to_emoji(text):
     
     return ' '.join(result) if result else '❓ Неизвестный текст'
 
-def get_font_variants(text):
-    """Превращает текст в разные стили"""
-    variants = []
+def create_palette_card(colors):
+    if not colors:
+        return None
     
-    # Математический стиль
-    math_map = {'a':'𝒶','b':'𝒷','c':'𝒸','d':'𝒹','e':'ℯ','f':'𝒻','g':'ℊ','h':'𝒽','i':'𝒾','j':'𝒿','k':'𝓀','l':'𝓁','m':'𝓂','n':'𝓃','o':'ℴ','p':'𝓅','q':'𝓆','r':'𝓇','s':'𝓈','t':'𝓉','u':'𝓊','v':'𝓋','w':'𝓌','x':'𝓍','y':'𝓎','z':'𝓏'}
-    math_text = ''.join([math_map.get(c, c) for c in text.lower()])
-    variants.append(math_text)
+    card_width = 600
+    card_height = 200
+    block_width = card_width // len(colors)
     
-    # Двойной стиль
-    double_map = {'a':'𝕒','b':'𝕓','c':'𝕔','d':'𝕕','e':'𝕖','f':'𝕗','g':'𝕘','h':'𝕙','i':'𝕚','j':'𝕛','k':'𝕜','l':'𝕝','m':'𝕞','n':'𝕟','o':'𝕠','p':'𝕡','q':'𝕢','r':'𝕣','s':'𝕤','t':'𝕥','u':'𝕦','v':'𝕧','w':'𝕨','x':'𝕩','y':'𝕪','z':'𝕫'}
-    double_text = ''.join([double_map.get(c, c) for c in text.lower()])
-    variants.append(double_text)
+    card = Image.new('RGB', (card_width, card_height), color='#F5F5F5')
+    draw = ImageDraw.Draw(card)
     
-    # Капитель (верхний регистр)
-    cap_text = text.upper()
-    variants.append(cap_text)
+    try:
+        font = ImageFont.truetype("arial.ttf", 16)
+    except:
+        font = ImageFont.load_default()
     
-    # Кружочки
-    circle_map = {'a':'🅐','b':'🅑','c':'🅒','d':'🅓','e':'🅔','f':'🅕','g':'🅖','h':'🅗','i':'🅘','j':'🅙','k':'🅚','l':'🅛','m':'🅜','n':'🅝','o':'🅞','p':'🅟','q':'🅠','r':'🅡','s':'🅢','t':'🅣','u':'🅤','v':'🅥','w':'🅦','x':'🅧','y':'🅨','z':'🅩'}
-    circle_text = ''.join([circle_map.get(c, c) for c in text.lower()])
-    variants.append(circle_text)
+    x = 0
+    for hex_color, r, g, b in colors:
+        draw.rectangle([x, 0, x + block_width, card_height - 40], fill=hex_color)
+        
+        text = hex_color
+        brightness = (r * 0.299 + g * 0.587 + b * 0.114)
+        text_color = '#FFFFFF' if brightness < 140 else '#000000'
+        draw.text((x + 10, card_height - 30), text, font=font, fill=text_color)
+        
+        try:
+            small_font = ImageFont.truetype("arial.ttf", 11)
+            rgb_text = f"{r},{g},{b}"
+            draw.text((x + 10, card_height - 20), rgb_text, font=small_font, fill=text_color)
+        except:
+            pass
+        
+        x += block_width
     
-    return variants
+    img_io = io.BytesIO()
+    card.save(img_io, format='PNG')
+    img_io.seek(0)
+    return img_io
+
+def create_font_preview(text, font_paths):
+    images = []
+    for font_path in font_paths:
+        img = Image.new('RGB', (600, 100), color='#FFFFFF')
+        draw = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.truetype(font_path, 48)
+        except:
+            font = ImageFont.load_default()
+            draw.text((10, 20), f"[{os.path.basename(font_path)}]", font=font, fill='#000000')
+        
+        draw.text((20, 25), text, font=font, fill='#000000')
+        
+        try:
+            small_font = ImageFont.truetype("arial.ttf", 12)
+            font_name = os.path.splitext(os.path.basename(font_path))[0]
+            draw.text((10, 5), font_name, font=small_font, fill='#888888')
+        except:
+            pass
+        
+        images.append(img)
+    
+    if not images:
+        return None
+    
+    total_height = sum(img.height + 5 for img in images)
+    combined = Image.new('RGB', (600, total_height), color='#FFFFFF')
+    y = 0
+    for img in images:
+        combined.paste(img, (0, y))
+        y += img.height + 5
+    
+    img_io = io.BytesIO()
+    combined.save(img_io, format='PNG')
+    img_io.seek(0)
+    return img_io
 
 def extract_colors(image_bytes, num_colors=5):
-    """Вырезает главные цвета из картинки"""
     img = Image.open(io.BytesIO(image_bytes))
-    
-    # Уменьшаем для скорости
     img = img.resize((100, 100))
     img = img.convert('RGB')
     
-    # Получаем цвета
     pixels = list(img.getdata())
     
-    # Простой алгоритм кластеризации
     colors = []
     for pixel in pixels:
         if len(colors) < num_colors:
             colors.append(pixel)
         else:
-            # Ищем ближайший цвет
             min_dist = float('inf')
             min_idx = 0
             for i, c in enumerate(colors):
@@ -194,11 +386,9 @@ def extract_colors(image_bytes, num_colors=5):
                 if dist < min_dist:
                     min_dist = dist
                     min_idx = i
-            # Если далеко от всех — заменяем самый старый
             if min_dist > 10000:
                 colors[min_idx] = pixel
     
-    # Конвертируем в HEX
     hex_colors = []
     for r, g, b in colors:
         hex_color = f"#{r:02x}{g:02x}{b:02x}".upper()
@@ -207,29 +397,23 @@ def extract_colors(image_bytes, num_colors=5):
     return hex_colors
 
 def create_preview(image_bytes):
-    """Создает превью стикера в кружочке"""
     img = Image.open(io.BytesIO(image_bytes))
     
-    # Приводим к квадрату
     size = min(img.size)
     left = (img.width - size) // 2
     top = (img.height - size) // 2
     img = img.crop((left, top, left + size, top + size))
     img = img.resize((400, 400))
     
-    # Создаем фон
     preview = Image.new('RGBA', (500, 500), (50, 50, 50, 255))
     
-    # Делаем круглую маску
     mask = Image.new('L', (400, 400), 0)
     draw = ImageDraw.Draw(mask)
     draw.ellipse((0, 0, 400, 400), fill=255)
     
-    # Применяем маску
     if img.mode != 'RGBA':
         img = img.convert('RGBA')
     
-    # Вставляем в центр фона
     preview.paste(img, (50, 50), mask)
     
     output = io.BytesIO()
@@ -237,48 +421,23 @@ def create_preview(image_bytes):
     output.seek(0)
     return output
 
-# ========== КОМАНДЫ ==========
-@dp.message(Command("start"))
-async def start(message: Message):
-    if is_admin(message.from_user.id):
-        await message.answer(
-            "🎨 Привет, Создатель!\n\n"
-            "📦 **Стикеры и эмодзи:**\n"
-            "/newpack - Создать пак стикеров\n"
-            "/newemoji - Создать пак эмодзи\n"
-            "/get [название] - Получить пак\n"
-            "/list - Мои паки\n"
-            "/delete [название] - Удалить пак\n"
-            "/stats - Статистика\n\n"
-            "🎨 **Дизайн-инструменты:**\n"
-            "/palette - Вырезать цвета из картинки\n"
-            "/preview - Показать стикер в кружке\n"
-            "/font [текст] - Красивые шрифты\n"
-            "/ask [вопрос] - Советы по дизайну\n\n"
-            "📝 **Текст:**\n"
-            "/maketext [текст] - Текст в эмодзи"
-        )
-    else:
-        await message.answer(
-            "👋 Привет!\n\n"
-            "Я бот для стикеров, эмодзи и дизайна.\n"
-            "Используй /get [название] чтобы получить пак."
-        )
+# ========== КОМАНДЫ С ОЧЕРЕДЬЮ ==========
 
 @dp.message(Command("palette"))
 async def palette_command(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Нет доступа.")
-        return
-    
     await state.set_state(CreatePack.waiting_for_palette)
-    await message.answer("🖼️ Кинь мне картинку, и я вырежу из неё 5 главных цветов!")
+    await message.answer(
+        "🖼️ Кинь мне картинку, и я создам для неё красивую палитру!",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="✨ Другую картинку", callback_data="palette_again")]
+            ]
+        )
+    )
 
 @dp.message(CreatePack.waiting_for_palette)
+@queue_handler
 async def handle_palette(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        return
-    
     if not message.photo and not message.document:
         await message.answer("❌ Кинь картинку!")
         return
@@ -295,16 +454,26 @@ async def handle_palette(message: Message, state: FSMContext):
         
         colors = extract_colors(file_data)
         
-        # Формируем ответ
-        response = "🎨 **Твоя палитра:**\n\n"
-        for hex_color, r, g, b in colors:
-            response += f"{hex_color} 🎨 RGB({r}, {g}, {b})\n"
+        palette_img = create_palette_card(colors)
         
-        # Добавляем цветные квадратики
-        for hex_color, _, _, _ in colors:
-            response += f"`{hex_color}` "
+        if palette_img:
+            await message.answer_photo(
+                types.BufferedInputFile(palette_img.getvalue(), filename="palette.png"),
+                caption="🎨 **Твоя палитра готова!**\n\n" +
+                       "\n".join([f"`{c[0]}`" for c in colors]),
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(text="🎨 Ещё", callback_data="palette_again"),
+                            InlineKeyboardButton(text="📐 Применить", callback_data="palette_apply")
+                        ]
+                    ]
+                )
+            )
+        else:
+            await message.answer("❌ Не удалось создать палитру. Попробуй другую картинку.")
         
-        await message.answer(response, parse_mode="Markdown")
         await state.clear()
         
     except Exception as e:
@@ -312,18 +481,12 @@ async def handle_palette(message: Message, state: FSMContext):
 
 @dp.message(Command("preview"))
 async def preview_command(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Нет доступа.")
-        return
-    
     await state.set_state(CreatePack.waiting_for_preview)
     await message.answer("🖼️ Кинь мне картинку или стикер, и я покажу, как он выглядит в чате!")
 
 @dp.message(CreatePack.waiting_for_preview)
+@queue_handler
 async def handle_preview(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        return
-    
     if not message.photo and not message.document and not message.sticker:
         await message.answer("❌ Кинь картинку или стикер!")
         return
@@ -344,7 +507,15 @@ async def handle_preview(message: Message, state: FSMContext):
         
         await message.answer_photo(
             types.BufferedInputFile(preview_bytes.getvalue(), filename="preview.png"),
-            caption="🖼️ Вот как будет выглядеть твой стикер в чате!"
+            caption="🖼️ Вот как будет выглядеть твой стикер в чате!",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="🔄 Другой стикер", callback_data="preview_again"),
+                        InlineKeyboardButton(text="📦 В палитру", callback_data="preview_to_palette")
+                    ]
+                ]
+            )
         )
         await state.clear()
         
@@ -352,31 +523,388 @@ async def handle_preview(message: Message, state: FSMContext):
         await message.answer(f"❌ Ошибка: {str(e)}")
 
 @dp.message(Command("font"))
-async def font_command(message: Message):
+async def font_command(message: Message, state: FSMContext):
+    await state.set_state(CreatePack.waiting_for_font)
+    await message.answer(
+        "📝 **Напиши текст для шрифтов:**\n\n"
+        "Например: `Hello, World!` или `Дизайн`",
+        parse_mode="Markdown"
+    )
+
+@dp.message(CreatePack.waiting_for_font)
+@queue_handler
+async def handle_font(message: Message, state: FSMContext):
+    text = message.text.strip()
+    if not text:
+        await message.answer("❌ Напиши текст!")
+        return
+    
+    font_list = [
+        "arial.ttf",
+        "times.ttf",
+        "cour.ttf",
+    ]
+    
+    available_fonts = []
+    for font_name in font_list:
+        if os.path.exists(font_name):
+            available_fonts.append(font_name)
+    
+    if not available_fonts:
+        img = Image.new('RGB', (600, 100), color='#FFFFFF')
+        draw = ImageDraw.Draw(img)
+        font = ImageFont.load_default()
+        draw.text((20, 35), text, font=font, fill='#000000')
+        img_io = io.BytesIO()
+        img.save(img_io, format='PNG')
+        img_io.seek(0)
+        await message.answer_photo(
+            types.BufferedInputFile(img_io.getvalue(), filename="font.png"),
+            caption="✨ **Твой текст:**\n\n" + text,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="✏️ Другой текст", callback_data="font_again")]
+                ]
+            )
+        )
+        await state.clear()
+        return
+    
+    font_preview = create_font_preview(text, available_fonts)
+    
+    if font_preview:
+        await message.answer_photo(
+            types.BufferedInputFile(font_preview.getvalue(), filename="font.png"),
+            caption="✨ **Твой текст разными шрифтами!**",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="✏️ Другой текст", callback_data="font_again")]
+                ]
+            )
+        )
+    else:
+        await message.answer("❌ Не удалось создать превью шрифтов. Попробуй другой текст.")
+    
+    await state.clear()
+
+# ========== ОСТАЛЬНЫЕ КОМАНДЫ ==========
+
+@dp.message(Command("start"))
+async def start(message: Message):
+    if is_admin(message.from_user.id):
+        await message.answer(
+            "🎨 **Привет, Создатель!**\n\n"
+            "📦 **Стикеры и эмодзи:**\n"
+            "/newpack - Создать пак стикеров\n"
+            "/newemoji - Создать пак эмодзи\n"
+            "/get [название] - Получить пак\n"
+            "/search [тег] - Найти паки по тегу\n"
+            "/list - Мои паки\n"
+            "/delete [название] - Удалить пак\n"
+            "/stats - Статистика\n\n"
+            "🎨 **Дизайн-инструменты:**\n"
+            "/palette - Вырезать цвета из картинки\n"
+            "/preview - Показать стикер в кружке\n"
+            "/font [текст] - Красивые шрифты\n"
+            "/ask [вопрос] - Советы по дизайну\n"
+            "/contrast - Проверить контраст цветов\n"
+            "/challenge - Получить дизайн-задачу\n"
+            "/pxrem - Конвертер PX ↔ REM\n"
+            "/golden - Золотое сечение\n\n"
+            "📝 **Текст:**\n"
+            "/maketext [текст] - Текст в эмодзи"
+        )
+    else:
+        await message.answer(
+            "👋 Привет!\n\n"
+            "🎨 **Дизайн-инструменты:**\n"
+            "/palette - Вырезать цвета из картинки\n"
+            "/preview - Показать стикер в кружке\n"
+            "/font [текст] - Красивые шрифты\n"
+            "/ask [вопрос] - Советы по дизайну\n"
+            "/contrast - Проверить контраст цветов\n"
+            "/pxrem - Конвертер PX ↔ REM\n"
+            "/golden - Золотое сечение\n"
+            "/maketext [текст] - Текст в эмодзи\n\n"
+            "📦 **Получить пак:**\n"
+            "/get [название] - Получить ссылку на пак\n"
+            "/search [тег] - Найти паки по тегу"
+        )
+
+@dp.message(Command("get"))
+async def get_pack(message: Message):
+    try:
+        pack_name = message.text.replace('/get', '').strip()
+        if not pack_name:
+            await message.answer("❌ Укажи название: /get название_пака")
+            return
+        
+        conn = sqlite3.connect('packs.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT pack_link, sticker_count, pack_type, downloads, tags FROM packs WHERE pack_name = ?', (pack_name,))
+        result = cursor.fetchone()
+        
+        if result:
+            pack_link, count, pack_type, downloads, tags = result
+            # Увеличиваем счётчик скачиваний
+            cursor.execute('UPDATE packs SET downloads = downloads + 1 WHERE pack_name = ?', (pack_name,))
+            conn.commit()
+            
+            tag_text = f"\n🏷️ Теги: {tags}" if tags else ""
+            await message.answer(
+                f"✅ Найден {'эмодзи-пак' if pack_type == 'emoji' else 'пак'}!\n\n"
+                f"📦 Название: {pack_name}\n"
+                f"📊 {'Эмодзи' if pack_type == 'emoji' else 'Стикеров'}: {count}\n"
+                f"⬇️ Скачиваний: {downloads + 1}{tag_text}\n"
+                f"🔗 Добавить: {pack_link}"
+            )
+        else:
+            await message.answer(f"❌ Пак с названием '{pack_name}' не найден!")
+        
+        conn.close()
+            
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
+
+@dp.message(Command("search"))
+async def search_packs(message: Message):
+    tag = message.text.replace('/search', '').strip().lower()
+    if not tag:
+        await message.answer("❌ Укажи тег для поиска: /search лето")
+        return
+    
+    conn = sqlite3.connect('packs.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT pack_name, sticker_count, pack_type, downloads, tags FROM packs WHERE LOWER(tags) LIKE ? ORDER BY downloads DESC', (f'%{tag}%',))
+    packs = cursor.fetchall()
+    conn.close()
+    
+    if not packs:
+        await message.answer(f"🔍 Паков с тегом '{tag}' не найдено.")
+        return
+    
+    text = f"🔍 **Найдено по тегу '{tag}':**\n\n"
+    for name, count, pack_type, downloads, tags in packs[:10]:  # Показываем топ-10
+        emoji = "🎨" if pack_type == 'sticker' else "✨"
+        text += f"{emoji} `{name}` — {count} {'стикеров' if pack_type == 'sticker' else 'эмодзи'} (⬇️{downloads})\n"
+    
+    if len(packs) > 10:
+        text += f"\n... и ещё {len(packs) - 10} паков"
+    
+    await message.answer(text, parse_mode="Markdown")
+
+@dp.message(Command("contrast"))
+async def contrast_command(message: Message, state: FSMContext):
+    args = message.text.replace('/contrast', '').strip().split()
+    if len(args) == 2:
+        color1 = args[0].strip()
+        color2 = args[1].strip()
+        await check_contrast(message, color1, color2)
+    else:
+        await state.set_state(CreatePack.waiting_for_contrast)
+        await message.answer(
+            "🎨 **Контраст-чекер WCAG**\n\n"
+            "Отправь мне два цвета в формате HEX или RGB.\n"
+            "Пример: `#FF5733` и `#FFFFFF`\n\n"
+            "Или напиши цвета через пробел: `/contrast #FF5733 #FFFFFF`",
+            parse_mode="Markdown"
+        )
+
+async def check_contrast(message, color1, color2):
+    try:
+        if color1.startswith('#'):
+            r1, g1, b1 = int(color1[1:3], 16), int(color1[3:5], 16), int(color1[5:7], 16)
+        else:
+            rgb1 = re.findall(r'\d+', color1)
+            if len(rgb1) >= 3:
+                r1, g1, b1 = map(int, rgb1[:3])
+            else:
+                await message.answer("❌ Неправильный формат цвета! Используй HEX (`#FF5733`) или RGB (`255,87,51`).", parse_mode="Markdown")
+                return
+        
+        if color2.startswith('#'):
+            r2, g2, b2 = int(color2[1:3], 16), int(color2[3:5], 16), int(color2[5:7], 16)
+        else:
+            rgb2 = re.findall(r'\d+', color2)
+            if len(rgb2) >= 3:
+                r2, g2, b2 = map(int, rgb2[:3])
+            else:
+                await message.answer("❌ Неправильный формат цвета! Используй HEX (`#FF5733`) или RGB (`255,87,51`).", parse_mode="Markdown")
+                return
+        
+        def luminance(r, g, b):
+            def lum_channel(c):
+                c = c / 255
+                if c <= 0.03928:
+                    return c / 12.92
+                return ((c + 0.055) / 1.055) ** 2.4
+            return 0.2126 * lum_channel(r) + 0.7152 * lum_channel(g) + 0.0722 * lum_channel(b)
+        
+        l1 = luminance(r1, g1, b1)
+        l2 = luminance(r2, g2, b2)
+        
+        ratio = (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+        ratio = round(ratio, 2)
+        
+        if ratio >= 7.0:
+            level = "✅✅✅ Проходит по **AAA** (высший уровень доступности)"
+            recommendation = "Отличный контраст! Идеально для текста любого размера."
+        elif ratio >= 4.5:
+            level = "✅✅ Проходит по **AA** (базовый уровень)"
+            recommendation = "Хороший контраст для обычного и крупного текста."
+        elif ratio >= 3.0:
+            level = "✅ Проходит по **AA** только для крупного текста (>18px)"
+            recommendation = "Рекомендуется увеличить контраст для обычного текста."
+        else:
+            level = "❌ **Не проходит** ни по одному уровню WCAG"
+            recommendation = "Сильно увеличь контраст! Сделай текст темнее или светлее фона."
+        
+        card = Image.new('RGB', (400, 200), color='#FFFFFF')
+        draw = ImageDraw.Draw(card)
+        
+        draw.rectangle([0, 0, 200, 200], fill=(r1, g1, b1))
+        draw.rectangle([200, 0, 400, 200], fill=(r2, g2, b2))
+        
+        try:
+            font = ImageFont.truetype("arial.ttf", 20)
+        except:
+            font = ImageFont.load_default()
+        draw.text((10, 10), f"Контраст: {ratio}:1", font=font, fill='#000000')
+        
+        img_io = io.BytesIO()
+        card.save(img_io, format='PNG')
+        img_io.seek(0)
+        
+        await message.answer_photo(
+            types.BufferedInputFile(img_io.getvalue(), filename="contrast.png"),
+            caption=f"🎨 **Результат проверки контраста**\n\n"
+                    f"Цвет 1: `{color1}`\n"
+                    f"Цвет 2: `{color2}`\n"
+                    f"**Соотношение:** `{ratio}:1`\n\n"
+                    f"{level}\n\n"
+                    f"💡 {recommendation}",
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при проверке контраста: {str(e)}")
+
+@dp.message(CreatePack.waiting_for_contrast)
+async def handle_contrast(message: Message, state: FSMContext):
+    colors = message.text.strip().split()
+    if len(colors) >= 2:
+        color1 = colors[0]
+        color2 = colors[1]
+        await check_contrast(message, color1, color2)
+        await state.clear()
+    else:
+        await message.answer("❌ Отправь **два** цвета через пробел! Например: `#FF5733 #FFFFFF`")
+
+@dp.message(Command("challenge"))
+async def challenge_command(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer("❌ Нет доступа.")
         return
     
-    text = message.text.replace('/font', '').strip()
-    if not text:
-        await message.answer("📝 Напиши текст после команды:\n/font hello")
+    challenge = random.choice(CHALLENGES)
+    
+    response = (
+        f"🎨 **Дизайн-челлендж!**\n\n"
+        f"**Задача:** {challenge['title']}\n"
+        f"**Описание:** {challenge['description']}\n"
+        f"**Стиль:** {challenge['style']}\n"
+        f"**Цвета:** " + ", ".join(challenge['colors']) + "\n"
+        f"**Формат:** {challenge['format']}\n\n"
+        f"✨ Твоя очередь! Удачи!"
+    )
+    
+    await message.answer(response)
+
+@dp.message(Command("pxrem"))
+async def pxrem_command(message: Message):
+    args = message.text.replace('/pxrem', '').strip()
+    if not args:
+        await message.answer(
+            "📐 **Конвертер PX ↔ REM**\n\n"
+            "Напиши значение в px или rem.\n"
+            "Примеры:\n"
+            "`/pxrem 16px` — перевести пиксели в REM\n"
+            "`/pxrem 1.5rem` — перевести REM в пиксели\n\n"
+            "Базовый размер: 16px (можно изменить, добавив второй параметр)\n"
+            "`/pxrem 16px 20px` — с базовым размером 20px",
+            parse_mode="Markdown"
+        )
         return
     
-    variants = get_font_variants(text)
+    parts = args.split()
+    if len(parts) >= 2:
+        value = parts[0]
+        base = float(parts[1].replace('px', '').strip())
+    else:
+        value = parts[0]
+        base = 16
     
-    response = "✨ **Красивые стили:**\n\n"
-    for i, variant in enumerate(variants):
-        style_name = ["Математический", "Двойной", "Капитель", "Кружочки"][i] if i < 4 else "Стиль"
-        response += f"**{style_name}:** {variant}\n"
+    try:
+        if 'rem' in value.lower():
+            rem = float(value.lower().replace('rem', '').strip())
+            px = rem * base
+            await message.answer(
+                f"📐 **Конвертация**\n\n"
+                f"{rem}rem = **{px:.2f}px**\n"
+                f"(при базовом размере {base}px)"
+            )
+        elif 'px' in value.lower():
+            px = float(value.lower().replace('px', '').strip())
+            rem = px / base
+            await message.answer(
+                f"📐 **Конвертация**\n\n"
+                f"{px}px = **{rem:.4f}rem**\n"
+                f"(при базовом размере {base}px)"
+            )
+        else:
+            px = float(value)
+            rem = px / base
+            await message.answer(
+                f"📐 **Конвертация**\n\n"
+                f"{px}px = **{rem:.4f}rem**\n"
+                f"(при базовом размере {base}px)\n\n"
+                f"Для конвертации в другую сторону используй `/pxrem 2rem`"
+            )
+    except:
+        await message.answer("❌ Ошибка! Напиши число с px или rem, например: `/pxrem 16px` или `/pxrem 1.5rem`", parse_mode="Markdown")
+
+@dp.message(Command("golden"))
+async def golden_command(message: Message):
+    args = message.text.replace('/golden', '').strip()
+    if not args:
+        await message.answer(
+            "✨ **Золотое сечение**\n\n"
+            "Напиши число, и я рассчитаю пропорции по золотому сечению.\n"
+            "Пример: `/golden 100`"
+        )
+        return
     
-    await message.answer(response, parse_mode="Markdown")
+    try:
+        num = float(args)
+        phi = 1.61803398875
+        
+        larger = num * phi
+        smaller = num / phi
+        
+        await message.answer(
+            f"✨ **Золотое сечение для {num}**\n\n"
+            f"**Большее число:** {larger:.2f}\n"
+            f"**Меньшее число:** {smaller:.2f}\n"
+            f"**Соотношение:** {larger:.2f} / {num:.2f} = {larger/num:.4f} ≈ φ (1.618)\n\n"
+            f"**Пропорции для дизайна:**\n"
+            f"• {num:.0f} × {larger:.0f} (соотношение 1:1.618)\n"
+            f"• {smaller:.0f} × {num:.0f} (обратное соотношение)"
+        )
+    except:
+        await message.answer("❌ Напиши число, например: `/golden 100`")
 
 @dp.message(Command("ask"))
 async def ask_command(message: Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Нет доступа.")
-        return
-    
     question = message.text.replace('/ask', '').strip()
     if not question:
         await message.answer(
@@ -386,7 +914,6 @@ async def ask_command(message: Message):
         )
         return
     
-    # Ищем ключевые слова
     response = None
     for color in DESIGN_TIPS:
         if color in question.lower():
@@ -404,10 +931,6 @@ async def ask_command(message: Message):
 
 @dp.message(Command("maketext"))
 async def make_text_emoji(message: Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Нет доступа.")
-        return
-    
     text = message.text.replace('/maketext', '').strip()
     if not text:
         await message.answer(
@@ -420,6 +943,8 @@ async def make_text_emoji(message: Message):
     
     result = text_to_emoji(text)
     await message.answer(f"✨ {result}")
+
+# ========== АДМИН-КОМАНДЫ ==========
 
 @dp.message(Command("newemoji"))
 async def new_emoji(message: Message, state: FSMContext):
@@ -448,6 +973,102 @@ async def new_pack(message: Message, state: FSMContext):
         "Каждую картинку по отдельности.\n"
         "Когда закончишь, напиши /done"
     )
+
+@dp.message(Command("list"))
+async def list_packs(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    
+    conn = sqlite3.connect('packs.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT pack_name, sticker_count, created_at, pack_type, downloads, tags FROM packs ORDER BY created_at DESC')
+    packs = cursor.fetchall()
+    conn.close()
+    
+    if not packs:
+        await message.answer("📭 У тебя пока нет созданных паков.")
+        return
+    
+    text = "📦 **Твои паки:**\n\n"
+    for name, count, created, pack_type, downloads, tags in packs:
+        emoji = "🎨" if pack_type == 'sticker' else "✨"
+        tag_text = f" [{tags}]" if tags else ""
+        text += f"{emoji} `{name}` — {count} {'стикеров' if pack_type == 'sticker' else 'эмодзи'} (⬇️{downloads}){tag_text}\n"
+    
+    await message.answer(text, parse_mode="Markdown")
+
+@dp.message(Command("delete"))
+async def delete_pack(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    
+    try:
+        pack_name = message.text.replace('/delete', '').strip()
+        if not pack_name:
+            await message.answer("❌ Укажи название: /delete название_пака")
+            return
+        
+        conn = sqlite3.connect('packs.db')
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM packs WHERE pack_name = ?', (pack_name,))
+        conn.commit()
+        conn.close()
+        
+        await message.answer(f"✅ Пак '{pack_name}' удален из базы.")
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
+
+@dp.message(Command("stats"))
+async def stats(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    
+    conn = sqlite3.connect('packs.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT COUNT(*) FROM packs')
+    total = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT SUM(sticker_count) FROM packs')
+    total_stickers = cursor.fetchone()[0] or 0
+    
+    cursor.execute('SELECT COUNT(*) FROM packs WHERE pack_type = "emoji"')
+    total_emoji = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM packs WHERE pack_type = "sticker"')
+    total_sticker_packs = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT SUM(downloads) FROM packs')
+    total_downloads = cursor.fetchone()[0] or 0
+    
+    # Топ-5 популярных паков
+    cursor.execute('SELECT pack_name, downloads, pack_type FROM packs ORDER BY downloads DESC LIMIT 5')
+    top_packs = cursor.fetchall()
+    
+    conn.close()
+    
+    text = (
+        f"📊 **Статистика:**\n\n"
+        f"📦 Всего паков: {total}\n"
+        f"🎨 Стикер-паков: {total_sticker_packs}\n"
+        f"✨ Эмодзи-паков: {total_emoji}\n"
+        f"🖼️ Всего элементов: {total_stickers}\n"
+        f"⬇️ Всего скачиваний: {total_downloads}\n\n"
+    )
+    
+    if top_packs:
+        text += "🏆 **Топ-5 популярных паков:**\n"
+        for name, downloads, pack_type in top_packs:
+            emoji = "🎨" if pack_type == 'sticker' else "✨"
+            text += f"{emoji} `{name}` — ⬇️{downloads}\n"
+    
+    await message.answer(text, parse_mode="Markdown")
+
+# ========== ОБРАБОТЧИКИ ДЛЯ СОЗДАНИЯ ПАКОВ ==========
 
 @dp.message(CreatePack.waiting_for_images)
 async def handle_image(message: Message, state: FSMContext):
@@ -598,10 +1219,32 @@ async def handle_pack_name(message: Message, state: FSMContext):
         await message.answer("❌ Название должно быть без пробелов! Попробуй снова:")
         return
     
+    await state.update_data(pack_name=pack_name)
+    await state.set_state(CreatePack.waiting_for_pack_tags)
+    await message.answer(
+        "🏷️ **Добавь теги для пака** (необязательно)\n\n"
+        "Напиши теги через запятую, например:\n"
+        "`лето, котики, яркое`\n\n"
+        "Или нажми /skip, чтобы пропустить."
+    )
+
+@dp.message(CreatePack.waiting_for_pack_tags)
+async def handle_pack_tags(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    
+    if message.text and message.text.lower() == '/skip':
+        tags = ""
+    else:
+        tags = message.text.strip()
+    
+    await state.update_data(tags=tags)
+    
+    data = await state.get_data()
+    pack_name = data.get('pack_name')
+    pack_type = data.get('pack_type', 'sticker')
+    
     try:
-        data = await state.get_data()
-        pack_type = data.get('pack_type', 'sticker')
-        
         conn = sqlite3.connect('packs.db')
         cursor = conn.cursor()
         
@@ -643,19 +1286,21 @@ async def handle_pack_name(message: Message, state: FSMContext):
         
         pack_link = get_pack_link(pack_name, pack_type)
         cursor.execute('''
-            INSERT INTO packs (pack_name, pack_link, sticker_count, created_at, creator_id, pack_type)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (pack_name, pack_link, len(stickers), datetime.now().isoformat(), message.from_user.id, pack_type))
+            INSERT INTO packs (pack_name, pack_link, sticker_count, created_at, creator_id, pack_type, tags)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (pack_name, pack_link, len(stickers), datetime.now().isoformat(), message.from_user.id, pack_type, tags))
         
         cursor.execute('DELETE FROM temp_stickers WHERE user_id = ?', (message.from_user.id,))
         conn.commit()
         conn.close()
         
+        tag_text = f"\n🏷️ Теги: {tags}" if tags else ""
         await message.answer(
             f"🎉 {'Эмодзи-пак' if pack_type == 'emoji' else 'Пак'} создан!\n\n"
             f"📦 Название: {pack_name}\n"
             f"📊 Элементов: {len(stickers)}\n"
-            f"🔗 Ссылка: {pack_link}\n\n"
+            f"🔗 Ссылка: {pack_link}\n"
+            f"⬇️ Скачиваний: 0{tag_text}\n\n"
             f"Теперь другие могут получить его по команде:\n"
             f"/get {pack_name}"
         )
@@ -675,6 +1320,30 @@ async def handle_emoji_pack_name(message: Message, state: FSMContext):
     if not pack_name or ' ' in pack_name:
         await message.answer("❌ Название должно быть без пробелов! Попробуй снова:")
         return
+    
+    await state.update_data(pack_name=pack_name)
+    await state.set_state(CreatePack.waiting_for_emoji_pack_tags)
+    await message.answer(
+        "🏷️ **Добавь теги для эмодзи-пака** (необязательно)\n\n"
+        "Напиши теги через запятую, например:\n"
+        "`эмодзи, эмоции, стикеры`\n\n"
+        "Или нажми /skip, чтобы пропустить."
+    )
+
+@dp.message(CreatePack.waiting_for_emoji_pack_tags)
+async def handle_emoji_pack_tags(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    
+    if message.text and message.text.lower() == '/skip':
+        tags = ""
+    else:
+        tags = message.text.strip()
+    
+    await state.update_data(tags=tags)
+    
+    data = await state.get_data()
+    pack_name = data.get('pack_name')
     
     try:
         conn = sqlite3.connect('packs.db')
@@ -710,19 +1379,21 @@ async def handle_emoji_pack_name(message: Message, state: FSMContext):
         
         pack_link = get_pack_link(pack_name, 'emoji')
         cursor.execute('''
-            INSERT INTO packs (pack_name, pack_link, sticker_count, created_at, creator_id, pack_type)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (pack_name, pack_link, len(stickers), datetime.now().isoformat(), message.from_user.id, 'emoji'))
+            INSERT INTO packs (pack_name, pack_link, sticker_count, created_at, creator_id, pack_type, tags)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (pack_name, pack_link, len(stickers), datetime.now().isoformat(), message.from_user.id, 'emoji', tags))
         
         cursor.execute('DELETE FROM temp_stickers WHERE user_id = ? AND pack_type = "emoji"', (message.from_user.id,))
         conn.commit()
         conn.close()
         
+        tag_text = f"\n🏷️ Теги: {tags}" if tags else ""
         await message.answer(
             f"🎉 Эмодзи-пак создан!\n\n"
             f"📦 Название: {pack_name}\n"
             f"📊 Эмодзи: {len(stickers)}\n"
-            f"🔗 Ссылка: {pack_link}\n\n"
+            f"🔗 Ссылка: {pack_link}\n"
+            f"⬇️ Скачиваний: 0{tag_text}\n\n"
             f"Теперь другие могут получить его по команде:\n"
             f"/get {pack_name}"
         )
@@ -732,107 +1403,33 @@ async def handle_emoji_pack_name(message: Message, state: FSMContext):
     
     await state.clear()
 
-@dp.message(Command("get"))
-async def get_pack(message: Message):
-    try:
-        pack_name = message.text.replace('/get', '').strip()
-        if not pack_name:
-            await message.answer("❌ Укажи название: /get название_пака")
-            return
-        
-        conn = sqlite3.connect('packs.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT pack_link, sticker_count, pack_type FROM packs WHERE pack_name = ?', (pack_name,))
-        result = cursor.fetchone()
-        conn.close()
-        
-        if result:
-            pack_link, count, pack_type = result
-            await message.answer(
-                f"✅ Найден {'эмодзи-пак' if pack_type == 'emoji' else 'пак'}!\n\n"
-                f"📦 Название: {pack_name}\n"
-                f"📊 {'Эмодзи' if pack_type == 'emoji' else 'Стикеров'}: {count}\n"
-                f"🔗 Добавить: {pack_link}"
-            )
-        else:
-            await message.answer(f"❌ Пак с названием '{pack_name}' не найден!")
-            
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)}")
+# ========== ОБРАБОТЧИКИ КНОПОК ==========
 
-@dp.message(Command("list"))
-async def list_packs(message: Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Нет доступа.")
-        return
+@dp.callback_query(lambda c: c.data.startswith('palette_'))
+async def process_palette_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
     
-    conn = sqlite3.connect('packs.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT pack_name, sticker_count, created_at, pack_type FROM packs ORDER BY created_at DESC')
-    packs = cursor.fetchall()
-    conn.close()
-    
-    if not packs:
-        await message.answer("📭 У тебя пока нет созданных паков.")
-        return
-    
-    text = "📦 **Твои паки:**\n\n"
-    for name, count, created, pack_type in packs:
-        emoji = "🎨" if pack_type == 'sticker' else "✨"
-        text += f"{emoji} `{name}` — {count} {'стикеров' if pack_type == 'sticker' else 'эмодзи'} (создан {created[:10]})\n"
-    
-    await message.answer(text, parse_mode="Markdown")
+    if callback_query.data == 'palette_again':
+        await palette_command(callback_query.message, state)
+    elif callback_query.data == 'palette_apply':
+        await callback_query.message.answer("🔧 Скоро здесь будет функция применения палитры!")
 
-@dp.message(Command("delete"))
-async def delete_pack(message: Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Нет доступа.")
-        return
+@dp.callback_query(lambda c: c.data.startswith('preview_'))
+async def process_preview_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
     
-    try:
-        pack_name = message.text.replace('/delete', '').strip()
-        if not pack_name:
-            await message.answer("❌ Укажи название: /delete название_пака")
-            return
-        
-        conn = sqlite3.connect('packs.db')
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM packs WHERE pack_name = ?', (pack_name,))
-        conn.commit()
-        conn.close()
-        
-        await message.answer(f"✅ Пак '{pack_name}' удален из базы.")
-        
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)}")
+    if callback_query.data == 'preview_again':
+        await preview_command(callback_query.message, state)
+    elif callback_query.data == 'preview_to_palette':
+        await palette_command(callback_query.message, state)
 
-@dp.message(Command("stats"))
-async def stats(message: Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Нет доступа.")
-        return
-    
-    conn = sqlite3.connect('packs.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) FROM packs')
-    total = cursor.fetchone()[0]
-    cursor.execute('SELECT SUM(sticker_count) FROM packs')
-    total_stickers = cursor.fetchone()[0] or 0
-    cursor.execute('SELECT COUNT(*) FROM packs WHERE pack_type = "emoji"')
-    total_emoji = cursor.fetchone()[0]
-    cursor.execute('SELECT COUNT(*) FROM packs WHERE pack_type = "sticker"')
-    total_sticker_packs = cursor.fetchone()[0]
-    conn.close()
-    
-    await message.answer(
-        f"📊 **Статистика:**\n\n"
-        f"📦 Всего паков: {total}\n"
-        f"🎨 Стикер-паков: {total_sticker_packs}\n"
-        f"✨ Эмодзи-паков: {total_emoji}\n"
-        f"🖼️ Всего элементов: {total_stickers}"
-    )
+@dp.callback_query(lambda c: c.data == 'font_again')
+async def process_font_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    await font_command(callback_query.message, state)
 
-# ========== ДЛЯ RENDER (HEALTH CHECK) ==========
+# ========== ДЛЯ RENDER ==========
+
 async def health_check(request):
     return web.Response(text="🤖 Bot is alive!")
 
@@ -845,15 +1442,13 @@ async def start_web_server():
     await site.start()
     print("🌐 Web server started on port 10000")
 
-# ========== ЗАПУСК ==========
 async def main():
     await asyncio.sleep(3)
-    print("🤖 Бот запущен с поддержкой стикеров и эмодзи!")
+    print("🤖 Бот запущен с поддержкой стикеров, эмодзи и дизайн-инструментов!")
+    print(f"⚙️ Очередь: {MAX_CONCURRENT_TASKS} задач одновременно, таймаут {TASK_TIMEOUT} сек")
     
-    # Запускаем веб-сервер в фоне
     asyncio.create_task(start_web_server())
     
-    # Запускаем бота
     await dp.start_polling(bot, request_timeout=60)
 
 if __name__ == "__main__":
