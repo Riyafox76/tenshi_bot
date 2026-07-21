@@ -341,8 +341,8 @@ async def remove_background(image_bytes):
 async def start(message: Message):
     if is_admin(message.from_user.id):
         await message.answer(
-            "🎨 **Привет, Tenshi!**\n\n"
-            "📦 **Стикеры и эмодзи:**\n"
+            "🎨 Привет, Tenshi!\n\n"
+            "📦 Стикеры и эмодзи:\n"
             "/newpack - Создать пак стикеров\n"
             "/newemoji - Создать пак эмодзи\n"
             "/get [название] - Получить пак\n"
@@ -350,7 +350,7 @@ async def start(message: Message):
             "/list - Мои паки\n"
             "/delete [название] - Удалить пак\n"
             "/stats - Статистика\n\n"
-            "🎨 **Дизайн-инструменты:**\n"
+            "🎨 Дизайн-инструменты:\n"
             "/palette - Вырезать цвета из картинки\n"
             "/preview - Показать стикер в кружке\n"
             "/font [текст] - Красивые шрифты\n"
@@ -358,13 +358,13 @@ async def start(message: Message):
             "/removebg - Удалить фон\n"
             "/pxrem - Конвертер PX ↔ REM\n"
             "/golden - Золотое сечение\n\n"
-            "📝 **Текст:**\n"
+            "📝 Текст:\n"
             "/maketext [текст] - Текст в эмодзи"
         )
     else:
         await message.answer(
-            "✦ **Привет!**\n\n"
-            "🎨 **Дизайн-инструменты:**\n"
+            "✦ Привет!\n\n"
+            "🎨 Дизайн-инструменты:\n"
             "/palette - Вырезать цвета\n"
             "/preview - Превью стикера\n"
             "/font [текст] - Красивые шрифты\n"
@@ -372,7 +372,7 @@ async def start(message: Message):
             "/pxrem - Конвертер PX ↔ REM\n"
             "/golden - Золотое сечение\n"
             "/maketext - Текст в эмодзи\n\n"
-            "📦 **Получить пак:**\n"
+            "📦 Получить пак:\n"
             "/get [название] - Ссылка на пак\n"
             "/search [тег] - Найти паки"
         )
@@ -384,7 +384,7 @@ async def removebg_command(message: Message, state: FSMContext):
         return
     await state.set_state(CreatePack.waiting_for_removebg)
     await message.answer(
-        "🖼️ **Удаление фона**\n\n"
+        "🖼️ Удаление фона\n\n"
         "Отправь мне картинку, и я удалю фон!\n"
         "Поддерживаются JPG, PNG, WEBP."
     )
@@ -409,7 +409,7 @@ async def _process_removebg(message: Message, state: FSMContext):
         if result:
             await message.answer_document(
                 document=BufferedInputFile(result, filename="no_bg.png"),
-                caption="✅ **Фон удалён!**"
+                caption="✅ Фон удалён!"
             )
         else:
             await message.answer(
@@ -455,7 +455,7 @@ async def _process_palette(message: Message, state: FSMContext):
         if palette_img:
             await message.answer_photo(
                 types.BufferedInputFile(palette_img.getvalue(), filename="palette.png"),
-                caption="🎨 **Твоя палитра готова!**\n\n" +
+                caption="🎨 Твоя палитра готова!\n\n" +
                        "\n".join([f"`{c[0]}`" for c in colors]),
                 parse_mode="Markdown"
             )
@@ -501,7 +501,7 @@ async def _process_preview(message: Message, state: FSMContext):
 async def font_command(message: Message, state: FSMContext):
     await state.set_state(CreatePack.waiting_for_font)
     await message.answer(
-        "📝 **Напиши текст для шрифтов:**\n\n"
+        "📝 Напиши текст для шрифтов:\n\n"
         "Например: `Hello, World!` или `Дизайн`",
         parse_mode="Markdown"
     )
@@ -531,7 +531,7 @@ async def _process_font(message: Message, state: FSMContext):
         img_io.seek(0)
         await message.answer_photo(
             types.BufferedInputFile(img_io.getvalue(), filename="font.png"),
-            caption="✨ **Твой текст:**\n\n" + text
+            caption="✨ Твой текст:\n\n" + text
         )
         await state.clear()
         return
@@ -539,7 +539,7 @@ async def _process_font(message: Message, state: FSMContext):
     if font_preview:
         await message.answer_photo(
             types.BufferedInputFile(font_preview.getvalue(), filename="font.png"),
-            caption="✨ **Твой текст разными шрифтами!**"
+            caption="✨ Твой текст разными шрифтами!"
         )
     else:
         await message.answer("❌ Не удалось создать превью шрифтов. Попробуй другой текст.")
@@ -603,7 +603,7 @@ async def search_packs(message: Message):
     if not packs:
         await message.answer(f"🔍 Паков с тегом '{tag}' не найдено.")
         return
-    text = f"🔍 **Найдено по тегу '{tag}':**\n\n"
+    text = f"🔍 Найдено по тегу '{tag}':\n\n"
     for name, count, pack_type, downloads, tags in packs[:10]:
         emoji = "🎨" if pack_type == 'sticker' else "✨"
         text += f"{emoji} `{name}` — {count} {'стикеров' if pack_type == 'sticker' else 'эмодзи'} (⬇️{downloads})\n"
@@ -621,7 +621,7 @@ async def contrast_command(message: Message, state: FSMContext):
     else:
         await state.set_state(CreatePack.waiting_for_contrast)
         await message.answer(
-            "🎨 **Контраст-чекер WCAG**\n\n"
+            "🎨 Контраст-чекер WCAG\n\n"
             "Отправь мне два цвета в формате HEX или RGB.\n"
             "Пример: `#FF5733` и `#FFFFFF`\n\n"
             "Или напиши цвета через пробел: `/contrast #FF5733 #FFFFFF`",
@@ -660,16 +660,16 @@ async def check_contrast(message, color1, color2):
         ratio = (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
         ratio = round(ratio, 2)
         if ratio >= 7.0:
-            level = "✅✅✅ Проходит по **AAA** (высший уровень доступности)"
+            level = "✅✅✅ Проходит по AAA (высший уровень доступности)"
             recommendation = "Отличный контраст! Идеально для текста любого размера."
         elif ratio >= 4.5:
-            level = "✅✅ Проходит по **AA** (базовый уровень)"
+            level = "✅✅ Проходит по AA (базовый уровень)"
             recommendation = "Хороший контраст для обычного и крупного текста."
         elif ratio >= 3.0:
-            level = "✅ Проходит по **AA** только для крупного текста (>18px)"
+            level = "✅ Проходит по AA только для крупного текста (>18px)"
             recommendation = "Рекомендуется увеличить контраст для обычного текста."
         else:
-            level = "❌ **Не проходит** ни по одному уровню WCAG"
+            level = "❌ Не проходит ни по одному уровню WCAG"
             recommendation = "Сильно увеличь контраст! Сделай текст темнее или светлее фона."
         card = Image.new('RGB', (400, 200), color='#FFFFFF')
         draw = ImageDraw.Draw(card)
@@ -685,8 +685,268 @@ async def check_contrast(message, color1, color2):
         img_io.seek(0)
         await message.answer_photo(
             types.BufferedInputFile(img_io.getvalue(), filename="contrast.png"),
-            caption=f"🎨 **Результат проверки контраста**\n\n"
+            caption=f"🎨 Результат проверки контраста\n\n"
                     f"Цвет 1: `{color1}`\n"
                     f"Цвет 2: `{color2}`\n"
-                    f"**Соотношение:** `{ratio}:1`\n\n"
-                    f"{level}\n
+                    f"Соотношение: `{ratio}:1`\n\n"
+                    f"{level}\n\n"
+                    f"💡 {recommendation}",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при проверке контраста: {str(e)}")
+
+@dp.message(CreatePack.waiting_for_contrast)
+async def handle_contrast(message: Message, state: FSMContext):
+    colors = message.text.strip().split()
+    if len(colors) >= 2:
+        color1 = colors[0]
+        color2 = colors[1]
+        await check_contrast(message, color1, color2)
+        await state.clear()
+    else:
+        await message.answer("❌ Отправь два цвета через пробел! Например: `#FF5733 #FFFFFF`")
+
+@dp.message(Command("challenge"))
+async def challenge_command(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    challenge = random.choice(CHALLENGES)
+    response = (
+        f"🎨 Дизайн-челлендж!\n\n"
+        f"Задача: {challenge['title']}\n"
+        f"Описание: {challenge['description']}\n"
+        f"Стиль: {challenge['style']}\n"
+        f"Цвета: " + ", ".join(challenge['colors']) + "\n"
+        f"Формат: {challenge['format']}\n\n"
+        f"✨ Твоя очередь! Удачи!"
+    )
+    await message.answer(response)
+
+@dp.message(Command("pxrem"))
+async def pxrem_command(message: Message):
+    args = message.text.replace('/pxrem', '').strip()
+    if not args:
+        await message.answer(
+            "📐 Конвертер PX ↔ REM\n\n"
+            "Напиши значение в px или rem.\n"
+            "Примеры:\n"
+            "`/pxrem 16px` — перевести пиксели в REM\n"
+            "`/pxrem 1.5rem` — перевести REM в пиксели\n\n"
+            "Базовый размер: 16px (можно изменить, добавив второй параметр)\n"
+            "`/pxrem 16px 20px` — с базовым размером 20px",
+            parse_mode="Markdown"
+        )
+        return
+    parts = args.split()
+    if len(parts) >= 2:
+        value = parts[0]
+        base = float(parts[1].replace('px', '').strip())
+    else:
+        value = parts[0]
+        base = 16
+    try:
+        if 'rem' in value.lower():
+            rem = float(value.lower().replace('rem', '').strip())
+            px = rem * base
+            await message.answer(
+                f"📐 Конвертация\n\n"
+                f"{rem}rem = {px:.2f}px\n"
+                f"(при базовом размере {base}px)"
+            )
+        elif 'px' in value.lower():
+            px = float(value.lower().replace('px', '').strip())
+            rem = px / base
+            await message.answer(
+                f"📐 Конвертация\n\n"
+                f"{px}px = {rem:.4f}rem\n"
+                f"(при базовом размере {base}px)"
+            )
+        else:
+            px = float(value)
+            rem = px / base
+            await message.answer(
+                f"📐 Конвертация\n\n"
+                f"{px}px = {rem:.4f}rem\n"
+                f"(при базовом размере {base}px)\n\n"
+                f"Для конвертации в другую сторону используй `/pxrem 2rem`"
+            )
+    except:
+        await message.answer("❌ Ошибка! Напиши число с px или rem, например: `/pxrem 16px` или `/pxrem 1.5rem`", parse_mode="Markdown")
+
+@dp.message(Command("golden"))
+async def golden_command(message: Message):
+    args = message.text.replace('/golden', '').strip()
+    if not args:
+        await message.answer(
+            "✨ Золотое сечение\n\n"
+            "Напиши число, и я рассчитаю пропорции по золотому сечению.\n"
+            "Пример: `/golden 100`"
+        )
+        return
+    try:
+        num = float(args)
+        phi = 1.61803398875
+        larger = num * phi
+        smaller = num / phi
+        await message.answer(
+            f"✨ Золотое сечение для {num}\n\n"
+            f"Большее число: {larger:.2f}\n"
+            f"Меньшее число: {smaller:.2f}\n"
+            f"Соотношение: {larger:.2f} / {num:.2f} = {larger/num:.4f} ≈ φ (1.618)\n\n"
+            f"Пропорции для дизайна:\n"
+            f"• {num:.0f} × {larger:.0f} (соотношение 1:1.618)\n"
+            f"• {smaller:.0f} × {num:.0f} (обратное соотношение)"
+        )
+    except:
+        await message.answer("❌ Напиши число, например: `/golden 100`")
+
+# ========== АДМИН-КОМАНДЫ ==========
+@dp.message(Command("newemoji"))
+async def new_emoji(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ У тебя нет прав создавать эмодзи.")
+        return
+    await state.set_state(CreatePack.waiting_for_emoji_images)
+    await state.update_data(pack_type='emoji')
+    await message.answer(
+        "📸 Отправляй мне картинки для эмодзи (PNG с прозрачным фоном).\n"
+        "Каждую картинку по отдельности.\n"
+        "Когда закончишь, напиши /done"
+    )
+
+@dp.message(Command("newpack"))
+async def new_pack(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ У тебя нет прав создавать паки.")
+        return
+    await state.set_state(CreatePack.waiting_for_images)
+    await state.update_data(pack_type='sticker')
+    await message.answer(
+        "📸 Отправляй мне картинки (PNG или JPG).\n"
+        "Каждую картинку по отдельности.\n"
+        "Когда закончишь, напиши /done"
+    )
+
+@dp.message(Command("list"))
+async def list_packs(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    conn = sqlite3.connect('packs.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT pack_name, sticker_count, created_at, pack_type, downloads, tags FROM packs ORDER BY created_at DESC')
+    packs = cursor.fetchall()
+    conn.close()
+    if not packs:
+        await message.answer("📭 У тебя пока нет созданных паков.")
+        return
+    text = "📦 Твои паки:\n\n"
+    for name, count, created, pack_type, downloads, tags in packs:
+        emoji = "🎨" if pack_type == 'sticker' else "✨"
+        tag_text = f" [{tags}]" if tags else ""
+        text += f"{emoji} `{name}` — {count} {'стикеров' if pack_type == 'sticker' else 'эмодзи'} (⬇️{downloads}){tag_text}\n"
+    await message.answer(text, parse_mode="Markdown")
+
+@dp.message(Command("delete"))
+async def delete_pack(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    try:
+        pack_name = message.text.replace('/delete', '').strip()
+        if not pack_name:
+            await message.answer("❌ Укажи название: /delete название_пака")
+            return
+        conn = sqlite3.connect('packs.db')
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM packs WHERE pack_name = ?', (pack_name,))
+        conn.commit()
+        conn.close()
+        await message.answer(f"✅ Пак '{pack_name}' удален из базы.")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
+
+@dp.message(Command("stats"))
+async def stats(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа.")
+        return
+    conn = sqlite3.connect('packs.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM packs')
+    total = cursor.fetchone()[0]
+    cursor.execute('SELECT SUM(sticker_count) FROM packs')
+    total_stickers = cursor.fetchone()[0] or 0
+    cursor.execute('SELECT COUNT(*) FROM packs WHERE pack_type = "emoji"')
+    total_emoji = cursor.fetchone()[0]
+    cursor.execute('SELECT COUNT(*) FROM packs WHERE pack_type = "sticker"')
+    total_sticker_packs = cursor.fetchone()[0]
+    cursor.execute('SELECT SUM(downloads) FROM packs')
+    total_downloads = cursor.fetchone()[0] or 0
+    cursor.execute('SELECT pack_name, downloads, pack_type FROM packs ORDER BY downloads DESC LIMIT 5')
+    top_packs = cursor.fetchall()
+    conn.close()
+    text = (
+        f"📊 Статистика:\n\n"
+        f"📦 Всего паков: {total}\n"
+        f"🎨 Стикер-паков: {total_sticker_packs}\n"
+        f"✨ Эмодзи-паков: {total_emoji}\n"
+        f"🖼️ Всего элементов: {total_stickers}\n"
+        f"⬇️ Всего скачиваний: {total_downloads}\n\n"
+    )
+    if top_packs:
+        text += "🏆 Топ-5 популярных паков:\n"
+        for name, downloads, pack_type in top_packs:
+            emoji = "🎨" if pack_type == 'sticker' else "✨"
+            text += f"{emoji} `{name}` — ⬇️{downloads}\n"
+    await message.answer(text, parse_mode="Markdown")
+
+# ========== ОБРАБОТЧИКИ КНОПОК ==========
+@dp.callback_query(lambda c: c.data == 'palette_again')
+async def process_palette_again(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    await palette_command(callback_query.message, state)
+
+@dp.callback_query(lambda c: c.data == 'preview_again')
+async def process_preview_again(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    await preview_command(callback_query.message, state)
+
+@dp.callback_query(lambda c: c.data == 'preview_to_palette')
+async def process_preview_to_palette(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    await palette_command(callback_query.message, state)
+
+@dp.callback_query(lambda c: c.data == 'font_again')
+async def process_font_again(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    await font_command(callback_query.message, state)
+
+# ========== ДЛЯ RENDER ==========
+async def health_check(request):
+    return web.Response(text="🎨 Tenshi Bot is alive!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 10000)
+    await site.start()
+    print("🌐 Web server started on port 10000")
+
+async def main():
+    await asyncio.sleep(3)
+    global task_queue
+    task_queue = TaskQueue()
+    task_queue.start()
+    print("🎨 Tenshi Design Bot запущен!")
+    print(f"⚙️ Очередь: {MAX_CONCURRENT_TASKS} задач, таймаут {TASK_TIMEOUT} сек")
+    print("✨ Remove.bg активен!")
+    asyncio.create_task(start_web_server())
+    await dp.start_polling(bot, request_timeout=90)
+
+if __name__ == "__main__":
+    asyncio.run(main())
