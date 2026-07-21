@@ -593,8 +593,8 @@ async def handle_font(message: Message, state: FSMContext):
 async def start(message: Message):
     if is_admin(message.from_user.id):
         await message.answer(
-            "🎨 **Привет, Создатель!**\n\n"
-            "📦 **Стикеры и эмодзи:**\n"
+            "🎨 Привет, Tenshi!\n\n"
+            "📦 Стикеры и эмодзи:\n"
             "/newpack - Создать пак стикеров\n"
             "/newemoji - Создать пак эмодзи\n"
             "/get [название] - Получить пак\n"
@@ -602,7 +602,7 @@ async def start(message: Message):
             "/list - Мои паки\n"
             "/delete [название] - Удалить пак\n"
             "/stats - Статистика\n\n"
-            "🎨 **Дизайн-инструменты:**\n"
+            "🎨 Дизайн-инструменты:\n"
             "/palette - Вырезать цвета из картинки\n"
             "/preview - Показать стикер в кружке\n"
             "/font [текст] - Красивые шрифты\n"
@@ -611,13 +611,13 @@ async def start(message: Message):
             "/challenge - Получить дизайн-задачу\n"
             "/pxrem - Конвертер PX ↔ REM\n"
             "/golden - Золотое сечение\n\n"
-            "📝 **Текст:**\n"
+            "📝 Текст:\n"
             "/maketext [текст] - Текст в эмодзи"
         )
     else:
         await message.answer(
-            "👋 Привет!\n\n"
-            "🎨 **Дизайн-инструменты:**\n"
+            "✦ Привет!\n\n"
+            "🎨 Дизайн-инструменты:\n"
             "/palette - Вырезать цвета из картинки\n"
             "/preview - Показать стикер в кружке\n"
             "/font [текст] - Красивые шрифты\n"
@@ -626,7 +626,7 @@ async def start(message: Message):
             "/pxrem - Конвертер PX ↔ REM\n"
             "/golden - Золотое сечение\n"
             "/maketext [текст] - Текст в эмодзи\n\n"
-            "📦 **Получить пак:**\n"
+            "📦 Получить пак:\n"
             "/get [название] - Получить ссылку на пак\n"
             "/search [тег] - Найти паки по тегу"
         )
