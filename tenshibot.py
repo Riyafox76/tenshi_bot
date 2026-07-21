@@ -162,7 +162,7 @@ class TaskQueue:
 task_queue = None
 
 # ========== ДЕКОРАТОР ДЛЯ ОЧЕРЕДИ ==========
-def queue_handler(func):
+def queue_handler(func):    # ← УБРАЛИ async
     async def wrapper(message: Message, *args, **kwargs):
         status_msg = await message.answer("⏳ Обрабатываю запрос...")
         try:
