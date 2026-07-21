@@ -19,7 +19,7 @@ from aiohttp import web
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = "8658625238:AAGIfOAz3cuVBUNrjvOinFK_2QGpoiVihvk"
 ADMIN_ID = 5145527096
-REMOVE_BG_API_KEY = "PXqz6KQmZGPLSNJqVBhne55L"  # Твой ключ для remove.bg
+REMOVE_BG_API_KEY = "PXqz6KQmZGPLSNJqVBhne55L"
 
 MAX_CONCURRENT_TASKS = 2
 TASK_TIMEOUT = 90
@@ -161,19 +161,18 @@ class TaskQueue:
 
 task_queue = None
 
-# ========== ДЕКОРАТОР ДЛЯ ОЧЕРЕДИ ==========
-def queue_handler(func):    # ← УБРАЛИ async
-    async def wrapper(message: Message, *args, **kwargs):
-        status_msg = await message.answer("⏳ Обрабатываю запрос...")
-        try:
-            result = await task_queue.add_task(func, message, *args, **kwargs)
-            await status_msg.delete()
-            return result
-        except asyncio.TimeoutError:
-            await status_msg.edit_text("❌ Время выполнения задачи истекло. Попробуйте позже.")
-        except Exception as e:
-            await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
-    return wrapper
+# ========== ОБЁРТКА ДЛЯ ОЧЕРЕДИ ==========
+async def process_with_queue(func, message, *args, **kwargs):
+    """Обёртка для выполнения функции через очередь"""
+    status_msg = await message.answer("⏳ Обрабатываю запрос...")
+    try:
+        result = await task_queue.add_task(func, message, *args, **kwargs)
+        await status_msg.delete()
+        return result
+    except asyncio.TimeoutError:
+        await status_msg.edit_text("❌ Время выполнения задачи истекло. Попробуйте позже.")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
 
 # ========== БАЗА ДАННЫХ ==========
 def init_db():
@@ -352,7 +351,6 @@ def create_preview(image_bytes):
     return output
 
 async def remove_background(image_bytes):
-    """Удаляет фон через remove.bg API"""
     if not REMOVE_BG_API_KEY:
         return None
     try:
@@ -370,7 +368,6 @@ async def remove_background(image_bytes):
         return None
 
 async def local_ai_assistant(prompt):
-    """Локальный ИИ на базе знаний"""
     prompt_lower = prompt.lower()
     best_score = 0
     best_key = "default"
@@ -440,11 +437,13 @@ async def removebg_command(message: Message, state: FSMContext):
     )
 
 @dp.message(CreatePack.waiting_for_removebg)
-@queue_handler
 async def handle_removebg(message: Message, state: FSMContext):
     if not message.photo and not message.document:
         await message.answer("❌ Отправь картинку!")
         return
+    await process_with_queue(_process_removebg, message, state)
+
+async def _process_removebg(message: Message, state: FSMContext):
     try:
         if message.photo:
             file_id = message.photo[-1].file_id
@@ -496,6 +495,7 @@ async def handle_ai(message: Message, state: FSMContext):
         await message.answer("❌ Напиши текст!")
         return
     await process_with_queue(_process_ai, message, state)
+
 async def _process_ai(message: Message, state: FSMContext):
     response = await local_ai_assistant(message.text)
     await message.answer(response, parse_mode="Markdown")
@@ -514,11 +514,13 @@ async def palette_command(message: Message, state: FSMContext):
     )
 
 @dp.message(CreatePack.waiting_for_palette)
-@queue_handler
 async def handle_palette(message: Message, state: FSMContext):
     if not message.photo and not message.document:
         await message.answer("❌ Кинь картинку!")
         return
+    await process_with_queue(_process_palette, message, state)
+
+async def _process_palette(message: Message, state: FSMContext):
     try:
         if message.photo:
             file_id = message.photo[-1].file_id
@@ -548,11 +550,13 @@ async def preview_command(message: Message, state: FSMContext):
     await message.answer("🖼️ Кинь мне картинку или стикер, и я покажу, как он выглядит в чате!")
 
 @dp.message(CreatePack.waiting_for_preview)
-@queue_handler
 async def handle_preview(message: Message, state: FSMContext):
     if not message.photo and not message.document and not message.sticker:
         await message.answer("❌ Кинь картинку или стикер!")
         return
+    await process_with_queue(_process_preview, message, state)
+
+async def _process_preview(message: Message, state: FSMContext):
     try:
         if message.sticker:
             file_id = message.sticker.file_id
@@ -582,12 +586,15 @@ async def font_command(message: Message, state: FSMContext):
     )
 
 @dp.message(CreatePack.waiting_for_font)
-@queue_handler
 async def handle_font(message: Message, state: FSMContext):
     text = message.text.strip()
     if not text:
         await message.answer("❌ Напиши текст!")
         return
+    await process_with_queue(_process_font, message, state)
+
+async def _process_font(message: Message, state: FSMContext):
+    text = message.text.strip()
     font_list = ["arial.ttf", "times.ttf", "cour.ttf"]
     available_fonts = []
     for font_name in font_list:
